@@ -1,0 +1,60 @@
+name: Release
+
+# Triggered by pushing a tag like v0.1.0. Publishes to npm and PyPI via
+# Trusted Publishing (OIDC) — no long-lived NPM_TOKEN/PYPI_TOKEN secrets.
+# One-time setup required before this works (see README "Publishing"):
+#   - npmjs.com: register a Trusted Publisher for each of
+#     @skilljit/core, @skilljit/proxy, @skilljit/mcp, skilljit,
+#     pointing at this repo + this workflow file + the "npm" environment.
+#   - pypi.org: register a Trusted Publisher for the "skilljit" project,
+#     pointing at this repo + this workflow file + the "pypi" environment.
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  test:
+    uses: ./.github/workflows/ci.yml
+
+  publish-npm:
+    needs: test
+    runs-on: ubuntu-latest
+    environment: npm
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          registry-url: "https://registry.npmjs.org"
+          cache: "npm"
+      - run: npm ci
+      - run: npm run build --workspaces --if-present
+      # Publish order matters: dependents must publish after their
+      # dependencies so a fresh `npm install` never lands in a window
+      # where a package's own dependency range can't resolve.
+      - run: npm publish --workspace packages/core --access public
+      - run: npm publish --workspace packages/proxy --access public
+      - run: npm publish --workspace packages/mcp --access public
+      - run: npm publish --workspace packages/cli --access public
+
+  publish-pypi:
+    needs: test
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install build
+      - run: python -m build python/
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: python/dist

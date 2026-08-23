@@ -1,0 +1,248 @@
+[
+  {
+    "id": "superpowers/brainstorming",
+    "name": "brainstorming",
+    "source": "github:obra/superpowers",
+    "description": "You MUST use this before any creative work - creating features, building components, adding functionality, or modifying behavior. Explores user intent, requirements and design before implementation."
+  },
+  {
+    "id": "superpowers/systematic-debugging",
+    "name": "systematic-debugging",
+    "source": "github:obra/superpowers",
+    "description": "Use when encountering any bug, test failure, or unexpected behavior, before proposing fixes."
+  },
+  {
+    "id": "superpowers/test-driven-development",
+    "name": "test-driven-development",
+    "source": "github:obra/superpowers",
+    "description": "Use when implementing any feature or bugfix, before writing implementation code."
+  },
+  {
+    "id": "superpowers/writing-plans",
+    "name": "writing-plans",
+    "source": "github:obra/superpowers",
+    "description": "Use when you have a spec or requirements for a multi-step task, before touching code."
+  },
+  {
+    "id": "superpowers/using-git-worktrees",
+    "name": "using-git-worktrees",
+    "source": "github:obra/superpowers",
+    "description": "Use when starting feature work that needs isolation from current workspace or before executing implementation plans - ensures an isolated workspace exists via native tools or git worktree fallback."
+  },
+  {
+    "id": "superpowers/requesting-code-review",
+    "name": "requesting-code-review",
+    "source": "github:obra/superpowers",
+    "description": "Use when completing tasks, implementing major features, or before merging to verify work meets requirements."
+  },
+  {
+    "id": "superpowers/verification-before-completion",
+    "name": "verification-before-completion",
+    "source": "github:obra/superpowers",
+    "description": "Use when about to claim work is complete, fixed, or passing, before committing or creating PRs - requires running verification commands and confirming output before making any success claims."
+  },
+  {
+    "id": "obsidian/defuddle",
+    "name": "defuddle",
+    "source": "github:anthropics/skills",
+    "description": "Extract clean markdown content from web pages using Defuddle CLI, removing clutter and navigation to save tokens. Use instead of WebFetch when the user provides a URL to read or analyze, for online documentation, articles, blog posts, or any standard web page."
+  },
+  {
+    "id": "obsidian/json-canvas",
+    "name": "json-canvas",
+    "source": "github:anthropics/skills",
+    "description": "Create and edit JSON Canvas files (.canvas) with nodes, edges, groups, and connections. Use when working with .canvas files, creating visual canvases, mind maps, flowcharts, or when the user mentions Canvas files in Obsidian."
+  },
+  {
+    "id": "obsidian/obsidian-bases",
+    "name": "obsidian-bases",
+    "source": "github:anthropics/skills",
+    "description": "Create and edit Obsidian Bases (.base files) with views, filters, formulas, and summaries. Use when working with .base files, creating database-like views of notes, or when the user mentions Bases, table views, card views, filters, or formulas in Obsidian."
+  },
+  {
+    "id": "dataviz/dataviz",
+    "name": "dataviz",
+    "source": "github:anthropics/skills",
+    "description": "Use this skill whenever you are about to create ANY chart, graph, plot, dashboard, or data visualization. Produces visualizations that read as one system using a brand-neutral placeholder palette."
+  },
+  {
+    "id": "artifact/artifact-design",
+    "name": "artifact-design",
+    "source": "github:anthropics/skills",
+    "description": "Design guidance and fundamentals for Artifacts. Load before writing any artifact, including a skill-instructed Markdown one."
+  },
+  {
+    "id": "artifact/artifact-diagramming",
+    "name": "artifact-diagramming",
+    "source": "github:anthropics/skills",
+    "description": "Diagramming know-how for Artifacts - when a picture earns its place, how to draw one that shows the real mechanism, and the inline-SVG mechanics that keep it legible in both themes."
+  },
+  {
+    "id": "meta/update-config",
+    "name": "update-config",
+    "source": "github:anthropics/skills",
+    "description": "Use this skill to configure the Claude Code harness via settings.json. Automated behaviors require hooks configured in settings.json. Also use for permissions, env vars, hook troubleshooting."
+  },
+  {
+    "id": "meta/keybindings-help",
+    "name": "keybindings-help",
+    "source": "github:anthropics/skills",
+    "description": "Use when the user wants to customize keyboard shortcuts, rebind keys, add chord bindings, or modify keybindings.json."
+  },
+  {
+    "id": "review/code-review",
+    "name": "code-review",
+    "source": "github:anthropics/skills",
+    "description": "Review the current diff, or a PR number/branch/path target, for correctness bugs and reuse/simplification/efficiency cleanups."
+  },
+  {
+    "id": "review/security-review",
+    "name": "security-review",
+    "source": "github:anthropics/skills",
+    "description": "Complete a security review of the pending changes on the current branch."
+  },
+  {
+    "id": "wshobson/docker-expert",
+    "name": "docker-expert",
+    "source": "github:wshobson/agents",
+    "description": "Build, debug, and optimize Dockerfiles and docker-compose setups. Use when the user mentions containers, images, Dockerfile, docker-compose, or asks why a container won't start."
+  },
+  {
+    "id": "wshobson/kubernetes-operator",
+    "name": "kubernetes-operator",
+    "source": "github:wshobson/agents",
+    "description": "Diagnose and fix Kubernetes deployments, services, and ingress issues. Use for kubectl debugging, pod crashloops, and manifest authoring."
+  },
+  {
+    "id": "wshobson/terraform-architect",
+    "name": "terraform-architect",
+    "source": "github:wshobson/agents",
+    "description": "Author and review Terraform modules for cloud infrastructure. Use when the user mentions Terraform, IaC, state files, or provisioning AWS/GCP/Azure resources."
+  },
+  {
+    "id": "wshobson/react-performance",
+    "name": "react-performance",
+    "source": "github:wshobson/agents",
+    "description": "Profile and fix React rendering performance issues: unnecessary re-renders, memoization, virtualization. Use when the user reports a slow or janky React UI."
+  },
+  {
+    "id": "wshobson/postgres-migrations",
+    "name": "postgres-migrations",
+    "source": "github:wshobson/agents",
+    "description": "Plan and execute zero-downtime PostgreSQL schema migrations, including backfills and index creation without locking large tables."
+  },
+  {
+    "id": "wshobson/graphql-schema-design",
+    "name": "graphql-schema-design",
+    "source": "github:wshobson/agents",
+    "description": "Design and evolve GraphQL schemas: types, resolvers, pagination, and versioning strategy. Use when the user mentions GraphQL, resolvers, or schema-first API design."
+  },
+  {
+    "id": "wshobson/rust-memory-safety",
+    "name": "rust-memory-safety",
+    "source": "github:wshobson/agents",
+    "description": "Debug Rust borrow-checker errors, lifetimes, and unsafe blocks. Use when the user pastes a Rust compiler error about borrowing or lifetimes."
+  },
+  {
+    "id": "wshobson/python-packaging",
+    "name": "python-packaging",
+    "source": "github:wshobson/agents",
+    "description": "Set up pyproject.toml, build wheels, and publish Python packages to PyPI, including Trusted Publishing via GitHub Actions."
+  },
+  {
+    "id": "wshobson/npm-publishing",
+    "name": "npm-publishing",
+    "source": "github:wshobson/agents",
+    "description": "Configure package.json, semantic versioning, and publish Node packages to npm, including npm Trusted Publishing via OIDC."
+  },
+  {
+    "id": "wshobson/stripe-integration",
+    "name": "stripe-integration",
+    "source": "github:wshobson/agents",
+    "description": "Integrate Stripe billing: checkout sessions, webhooks, subscriptions, and idempotent payment handling."
+  },
+  {
+    "id": "wshobson/jwt-auth",
+    "name": "jwt-auth",
+    "source": "github:wshobson/agents",
+    "description": "Implement JWT-based authentication and refresh-token rotation for a web API. Use when the user mentions login, sessions, tokens, or auth middleware."
+  },
+  {
+    "id": "wshobson/elasticsearch-tuning",
+    "name": "elasticsearch-tuning",
+    "source": "github:wshobson/agents",
+    "description": "Tune Elasticsearch/OpenSearch mappings, analyzers, and queries for relevance and latency. Use for slow searches or bad ranking."
+  },
+  {
+    "id": "wshobson/redis-caching",
+    "name": "redis-caching",
+    "source": "github:wshobson/agents",
+    "description": "Design Redis caching strategies: TTLs, cache invalidation, and avoiding thundering-herd and stale-cache bugs."
+  },
+  {
+    "id": "wshobson/websocket-scaling",
+    "name": "websocket-scaling",
+    "source": "github:wshobson/agents",
+    "description": "Scale WebSocket connections across multiple server instances using pub/sub, sticky sessions, or a message broker."
+  },
+  {
+    "id": "wshobson/ffmpeg-video-processing",
+    "name": "ffmpeg-video-processing",
+    "source": "github:wshobson/agents",
+    "description": "Transcode, trim, and encode video with ffmpeg command-line flags. Use when the user mentions video conversion, codecs, or bitrate."
+  },
+  {
+    "id": "wshobson/pandas-data-cleaning",
+    "name": "pandas-data-cleaning",
+    "source": "github:wshobson/agents",
+    "description": "Clean and reshape tabular data with pandas: missing values, dtype coercion, joins, and groupby aggregation."
+  },
+  {
+    "id": "wshobson/pytest-fixtures",
+    "name": "pytest-fixtures",
+    "source": "github:wshobson/agents",
+    "description": "Write pytest fixtures, parametrized tests, and mocks for Python test suites."
+  },
+  {
+    "id": "wshobson/github-actions-ci",
+    "name": "github-actions-ci",
+    "source": "github:wshobson/agents",
+    "description": "Author and debug GitHub Actions workflows: matrix builds, caching, and reusable workflows."
+  },
+  {
+    "id": "wshobson/tailwind-layout",
+    "name": "tailwind-layout",
+    "source": "github:wshobson/agents",
+    "description": "Build responsive layouts with Tailwind CSS utility classes, including grid, flexbox, and dark-mode variants."
+  },
+  {
+    "id": "wshobson/sql-query-optimization",
+    "name": "sql-query-optimization",
+    "source": "github:wshobson/agents",
+    "description": "Diagnose slow SQL queries using EXPLAIN plans and propose index or query rewrites."
+  },
+  {
+    "id": "wshobson/mongodb-schema-design",
+    "name": "mongodb-schema-design",
+    "source": "github:wshobson/agents",
+    "description": "Design MongoDB document schemas, embedding vs referencing tradeoffs, and aggregation pipelines."
+  },
+  {
+    "id": "wshobson/grpc-service-design",
+    "name": "grpc-service-design",
+    "source": "github:wshobson/agents",
+    "description": "Define protobuf messages and gRPC services, including streaming RPCs and versioning."
+  },
+  {
+    "id": "wshobson/android-jetpack-compose",
+    "name": "android-jetpack-compose",
+    "source": "github:wshobson/agents",
+    "description": "Build Android UI with Jetpack Compose: state hoisting, recomposition, and navigation."
+  },
+  {
+    "id": "wshobson/swiftui-animations",
+    "name": "swiftui-animations",
+    "source": "github:wshobson/agents",
+    "description": "Implement SwiftUI animations and transitions, including matched geometry effects."
+  }
+]

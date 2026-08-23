@@ -1,0 +1,28 @@
+{
+  "name": "@skilljit/proxy",
+  "version": "0.1.0",
+  "description": "Upstream MCP server management, adoption/restore of client configs, and the tool_find/tool_call routing layer",
+  "type": "module",
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@skilljit/core": "^0.1.0",
+    "@modelcontextprotocol/sdk": "^1.30.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.0",
+    "vitest": "^4.1.11"
+  }
+}

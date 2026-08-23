@@ -1,0 +1,30 @@
+{
+  "name": "@skilljit/core",
+  "version": "0.1.0",
+  "description": "Local catalog, full-text search, and token accounting for skilljit",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "better-sqlite3": "^13.0.3",
+    "gpt-tokenizer": "^4.0.0",
+    "yaml": "^2.9.0"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.11",
+    "typescript": "^5.7.0",
+    "vitest": "^4.1.11"
+  }
+}

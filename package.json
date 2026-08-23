@@ -1,0 +1,22 @@
+{
+  "name": "skilljit-monorepo",
+  "private": true,
+  "version": "0.0.0",
+  "workspaces": [
+    "packages/*",
+    "bench"
+  ],
+  "scripts": {
+    "build": "npm run build -w packages/core -w packages/proxy -w packages/mcp -w packages/cli",
+    "test": "npm run test --workspaces --if-present",
+    "lint": "npm run lint --workspaces --if-present"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.0",
+    "vitest": "^4.1.11",
+    "@types/node": "^22.10.0"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
