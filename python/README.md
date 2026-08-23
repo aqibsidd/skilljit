@@ -19,6 +19,10 @@ from skilljit import Catalog
 with Catalog() as catalog:
     for hit in catalog.search_skills("postgres migration", limit=3):
         print(hit.skill.name, hit.skill.source)
+
+    skill = catalog.get_skill("acme/repo/postgres-migrate")
+    for f in skill.files or []:  # bundled reference docs/scripts, if any
+        print(f.path)
 ```
 
 See the [main repo](https://github.com/aqibsidd/skilljit) for the full

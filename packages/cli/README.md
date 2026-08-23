@@ -13,9 +13,9 @@ handler that never fires, a frozen tool-list reference) and Anthropic closed the
 as **not planned**. The issue's own recommended workaround is to *"declare all tools
 at startup and dispatch internally via mode/action parameters."*
 
-That's what skilljit does. Its MCP tool list is **fixed and never changes** — five
-tools, always. Skills and upstream MCP tools are found and loaded through those five
-tools, not by re-registering the tool list. This is why skilljit works on Claude
+That's what skilljit does. Its MCP tool list is **fixed and never changes** — a
+small, constant handful of tools, always. Skills and upstream MCP tools are found
+and loaded through those tools, not by re-registering the tool list. This is why skilljit works on Claude
 Desktop, Claude Code, Codex, and Cursor while `list_changed`-based proxies silently
 degrade on at least one of them.
 
@@ -209,7 +209,7 @@ recall is genuinely inadequate.
 skilljit/
   packages/core/     catalog store, FTS5 index, ranking, token accounting
   packages/proxy/    upstream MCP server management, config adopt/restore, tool_find/tool_call routing
-  packages/mcp/      the MCP stdio server (the five fixed tools)
+  packages/mcp/      the MCP stdio server (the fixed tool surface, see "The six tools" above)
   packages/cli/      skilljit sync | search | serve | stats | init | adopt | restore | doctor  (this package)
   python/            pip package — CLI shim + read-only query API for Agent SDK users
   bench/             labeled task→skill eval set + recall@k harness
