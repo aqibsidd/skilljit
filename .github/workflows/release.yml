@@ -31,6 +31,9 @@ jobs:
           node-version: "22"
           registry-url: "https://registry.npmjs.org"
           cache: "npm"
+      # npm Trusted Publishing (OIDC) needs npm CLI >= 11.5.1; the Node 22
+      # runner image's bundled npm predates that.
+      - run: npm install -g npm@latest
       - run: npm ci
       - run: npm run build
       # Publish order matters: dependents must publish after their
