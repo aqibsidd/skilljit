@@ -1,4 +1,7 @@
 #!/usr/bin/env node
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import path from "node:path";
 import { Command } from "commander";
 import { Catalog, defaultCatalogPath, DEFAULT_GITHUB_SOURCES } from "@skilljit/core";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
@@ -7,6 +10,13 @@ import { latestAdoption, resolveManagedUpstreams } from "@skilljit/proxy";
 import { runSync } from "./commands/sync.js";
 import { runSearch, formatSearchResults } from "./commands/search.js";
 import { defaultStateDir, cmdInit, cmdAdopt, cmdRestore, cmdDoctor } from "./commands/proxy.js";
+
+// Read the real version from this package's own package.json rather than
+// hardcoding a string here that silently drifts from every release.
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const { version: packageVersion } = JSON.parse(
+  readFileSync(path.join(__dirname, "..", "package.json"), "utf8"),
+) as { version: string };
 
 const program = new Command();
 
@@ -17,7 +27,7 @@ program
       "Install thousands of skills at the token cost of one — nothing loads " +
       "into context until a task actually needs it.",
   )
-  .version("0.1.0");
+  .version(packageVersion);
 
 function parseRepoSlug(value: string, previous: { owner: string; repo: string }[]): { owner: string; repo: string }[] {
   const slash = value.indexOf("/");

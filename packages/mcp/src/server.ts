@@ -1,8 +1,18 @@
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import path from "node:path";
 import { z } from "zod";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { Catalog, TokenLedger } from "@skilljit/core";
 import { UpstreamManager } from "@skilljit/proxy";
 import type { UpstreamSpec, ConnectFn } from "@skilljit/proxy";
+
+// Read the real version from this package's own package.json rather than
+// hardcoding a string here that silently drifts from every release.
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const { version: packageVersion } = JSON.parse(
+  readFileSync(path.join(__dirname, "..", "package.json"), "utf8"),
+) as { version: string };
 
 export interface CreateServerOptions {
   catalogPath: string;
@@ -72,7 +82,7 @@ export function createServer(opts: CreateServerOptions): ServerHandle {
     recordBaselineSkill(meta);
   }
 
-  const server = new McpServer({ name: "skilljit", version: "0.1.0" });
+  const server = new McpServer({ name: "skilljit", version: packageVersion });
 
   server.registerTool(
     "skill_find",
