@@ -25,14 +25,14 @@ jobs:
       id-token: write
       contents: read
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: "22"
           registry-url: "https://registry.npmjs.org"
           cache: "npm"
       - run: npm ci
-      - run: npm run build --workspaces --if-present
+      - run: npm run build
       # Publish order matters: dependents must publish after their
       # dependencies so a fresh `npm install` never lands in a window
       # where a package's own dependency range can't resolve.
@@ -49,8 +49,8 @@ jobs:
       id-token: write
       contents: read
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       - run: pip install build
