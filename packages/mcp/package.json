@@ -4,6 +4,13 @@
   "description": "MCP stdio server exposing skilljit's fixed 5-tool surface for just-in-time skill and MCP-tool routing",
   "type": "module",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aqibsidd/skilljit.git",
+    "directory": "packages/mcp"
+  },
+  "homepage": "https://github.com/aqibsidd/skilljit#readme",
+  "bugs": "https://github.com/aqibsidd/skilljit/issues",
   "publishConfig": {
     "access": "public"
   },

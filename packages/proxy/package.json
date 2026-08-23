@@ -4,6 +4,13 @@
   "description": "Upstream MCP server management, adoption/restore of client configs, and the tool_find/tool_call routing layer",
   "type": "module",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aqibsidd/skilljit.git",
+    "directory": "packages/proxy"
+  },
+  "homepage": "https://github.com/aqibsidd/skilljit#readme",
+  "bugs": "https://github.com/aqibsidd/skilljit/issues",
   "publishConfig": {
     "access": "public"
   },
