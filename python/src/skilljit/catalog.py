@@ -8,6 +8,7 @@ out to the CLI for every lookup.
 
 from __future__ import annotations
 
+import json
 import re
 import sqlite3
 from dataclasses import dataclass
@@ -41,8 +42,15 @@ class SkillMeta:
 
 
 @dataclass(frozen=True)
+class SkillFile:
+    path: str
+    content: str
+
+
+@dataclass(frozen=True)
 class Skill(SkillMeta):
     body: str
+    files: Optional[list[SkillFile]] = None
 
 
 @dataclass(frozen=True)
@@ -132,12 +140,15 @@ class Catalog:
 
 
 def _row_to_skill(row: sqlite3.Row) -> Skill:
+    files_json = row["files_json"] if "files_json" in row.keys() else None
+    files = [SkillFile(**f) for f in json.loads(files_json)] if files_json else None
     return Skill(
         id=row["id"],
         name=row["name"],
         source=row["source"],
         description=row["description"],
         body=row["body"],
+        files=files,
         install_count=row["install_count"],
         audit_status=row["audit_status"],
         updated_at=row["updated_at"],

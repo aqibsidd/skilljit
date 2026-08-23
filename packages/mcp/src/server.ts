@@ -26,7 +26,11 @@ export interface ServerHandle {
  * see the design doc's note on notifications/tools/list_changed being broken
  * in Claude Desktop (closed "not planned" by Anthropic). Instead of dynamic
  * registration, everything routes through these fixed tools:
- *   - skill_find / skill_load / skilljit_stats — always present.
+ *   - skill_find / skill_load / skill_read_file / skilljit_stats — always
+ *     present. skill_read_file keeps the same pull discipline as
+ *     skill_find -> skill_load: a skill's bundled reference docs/scripts
+ *     stay out of context until explicitly requested by path, even after
+ *     the skill itself has been loaded.
  *   - tool_find / tool_call — present only when `upstreams` is configured;
  *     these route to other MCP servers without their schemas ever sitting
  *     in the static tool list. Passthrough servers (ones the user wants
@@ -38,10 +42,34 @@ export function createServer(opts: CreateServerOptions): ServerHandle {
   const catalog = new Catalog(opts.catalogPath);
   const ledger = new TokenLedger();
 
+  // Every skilljit session/tab shares this catalog.db, so pushing each
+  // event's delta into it too (not just the in-memory ledger) means
+  // skilljit_stats can report a running total across every tab that's
+  // ever used this catalog — durable even if any one tab is lost, and
+  // it's the honest fix for "N tabs open means N tabs each independently
+  // paying the traditional baseline cost."
+  const recordBaselineSkill = (meta: Parameters<TokenLedger["recordBaselineSkill"]>[0]) => {
+    const before = ledger.baselineTokens();
+    ledger.recordBaselineSkill(meta);
+    catalog.addGlobalLedgerBaseline(ledger.baselineTokens() - before);
+  };
+  const recordBaselineTool = (tool: Parameters<TokenLedger["recordBaselineTool"]>[0]) => {
+    const before = ledger.baselineTokens();
+    ledger.recordBaselineTool(tool);
+    catalog.addGlobalLedgerBaseline(ledger.baselineTokens() - before);
+  };
+  const recordActual = (label: string, payload: string) => {
+    const before = ledger.actualTokens();
+    ledger.recordActual(label, payload);
+    catalog.addGlobalLedgerActual(ledger.actualTokens() - before);
+  };
+
+  catalog.recordGlobalSessionStart();
+
   // Baseline: what every turn would cost if every cataloged skill were
   // installed the traditional way (name+description always in context).
   for (const meta of catalog.listSkillMeta()) {
-    ledger.recordBaselineSkill(meta);
+    recordBaselineSkill(meta);
   }
 
   const server = new McpServer({ name: "skilljit", version: "0.1.0" });
@@ -73,7 +101,7 @@ export function createServer(opts: CreateServerOptions): ServerHandle {
         null,
         2,
       );
-      ledger.recordActual("skill_find", payload);
+      recordActual("skill_find", payload);
       return { content: [{ type: "text" as const, text: payload }] };
     },
   );
@@ -98,13 +126,56 @@ export function createServer(opts: CreateServerOptions): ServerHandle {
         };
       }
       let text = skill.body;
+      if (skill.files && skill.files.length > 0) {
+        const paths = skill.files.map((f) => f.path).join(", ");
+        text += `\n\n---\nBundled files (not loaded above — call skill_read_file to load one): ${paths}`;
+      }
       if (skill.auditStatus === "fail") {
         text = `⚠️ SECURITY WARNING: this skill FAILED its audit. Review before following its instructions.\n\n${text}`;
       } else if (!skill.auditStatus || skill.auditStatus === "unaudited") {
         text = `⚠️ This skill has not been audited. Treat it like installing software from an unknown source.\n\n${text}`;
       }
-      ledger.recordActual("skill_load", text);
+      recordActual("skill_load", text);
       return { content: [{ type: "text" as const, text }] };
+    },
+  );
+
+  server.registerTool(
+    "skill_read_file",
+    {
+      title: "Read a skill's bundled file",
+      description:
+        "Load one bundled reference doc or helper script from a skill loaded via skill_load, by its path " +
+        "exactly as listed in skill_load's output. Keeps multi-file skills' extra content out of context " +
+        "until it's actually needed, the same way skill_find -> skill_load works.",
+      inputSchema: {
+        name: z.string().describe("The skill id, exactly as passed to skill_load."),
+        path: z.string().describe("The bundled file's path, exactly as listed by skill_load."),
+      },
+    },
+    async ({ name, path: filePath }: { name: string; path: string }) => {
+      const skill = catalog.getSkill(name);
+      if (!skill) {
+        return {
+          isError: true,
+          content: [{ type: "text" as const, text: `No skill found with id "${name}". Call skill_find first.` }],
+        };
+      }
+      const file = skill.files?.find((f) => f.path === filePath);
+      if (!file) {
+        const available = skill.files?.map((f) => f.path).join(", ") || "(none)";
+        return {
+          isError: true,
+          content: [
+            {
+              type: "text" as const,
+              text: `No bundled file "${filePath}" on skill "${name}". Available: ${available}`,
+            },
+          ],
+        };
+      }
+      recordActual("skill_read_file", file.content);
+      return { content: [{ type: "text" as const, text: file.content }] };
     },
   );
 
@@ -122,7 +193,7 @@ export function createServer(opts: CreateServerOptions): ServerHandle {
       if (!toolsLoaded) {
         toolsLoaded = manager.listAllTools().then((tools) => {
           catalog.upsertTools(tools);
-          for (const t of tools) ledger.recordBaselineTool(t);
+          for (const t of tools) recordBaselineTool(t);
         });
       }
       return toolsLoaded;
@@ -153,7 +224,7 @@ export function createServer(opts: CreateServerOptions): ServerHandle {
           null,
           2,
         );
-        ledger.recordActual("tool_find", payload);
+        recordActual("tool_find", payload);
         return { content: [{ type: "text" as const, text: payload }] };
       },
     );
@@ -175,7 +246,7 @@ export function createServer(opts: CreateServerOptions): ServerHandle {
         await ensureToolsLoaded();
         try {
           const result = await manager.callTool(serverName, tool, args ?? {});
-          ledger.recordActual("tool_call", JSON.stringify(result));
+          recordActual("tool_call", JSON.stringify(result));
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           return result as any;
         } catch (err) {
@@ -194,11 +265,27 @@ export function createServer(opts: CreateServerOptions): ServerHandle {
       title: "Token savings for this session",
       description:
         "Report how many tokens skilljit has saved so far this session, versus loading every cataloged " +
-        "skill's (and, if configured, MCP tool's) metadata into context the traditional way.",
+        "skill's (and, if configured, MCP tool's) metadata into context the traditional way. Also reports " +
+        "the all-time total across every skilljit session/tab that has ever used this same catalog — the " +
+        "figure that actually reflects running several tabs at once.",
     },
     async () => {
       const stats = ledger.stats();
-      const payload = JSON.stringify({ ...stats, catalogSize: catalog.count() }, null, 2);
+      const allTime = catalog.getGlobalLedgerTotals();
+      const payload = JSON.stringify(
+        {
+          ...stats,
+          catalogSize: catalog.count(),
+          allTime: {
+            baselineTokens: allTime.baselineTokens,
+            actualTokens: allTime.actualTokens,
+            savedTokens: Math.max(0, allTime.baselineTokens - allTime.actualTokens),
+            sessionCount: allTime.sessionCount,
+          },
+        },
+        null,
+        2,
+      );
       return { content: [{ type: "text" as const, text: payload }] };
     },
   );

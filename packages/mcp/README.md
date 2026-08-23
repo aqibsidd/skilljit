@@ -1,9 +1,9 @@
 # @skilljit/mcp
 
 The MCP stdio server at the core of [skilljit](https://github.com/aqibsidd/skilljit)
-— a fixed 5-tool surface (`skill_find`, `skill_load`, `tool_find`, `tool_call`,
-`skilljit_stats`) that never grows or shrinks at runtime, so nothing depends on
-MCP's broken `notifications/tools/list_changed`.
+— a fixed tool surface (`skill_find`, `skill_load`, `skill_read_file`, `tool_find`,
+`tool_call`, `skilljit_stats`) that never grows or shrinks at runtime, so nothing
+depends on MCP's broken `notifications/tools/list_changed`.
 
 Most people should install [`skilljit`](https://www.npmjs.com/package/skilljit)
 (the CLI) rather than this package directly — it wires this server up via

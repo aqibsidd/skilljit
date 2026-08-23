@@ -56,11 +56,12 @@ describe("skilljit MCP server — proxy mode (skills + tool routing)", () => {
     fs.rmSync(dir, { recursive: true, force: true });
   });
 
-  it("exposes all five fixed tools when upstreams are configured", async () => {
+  it("exposes all six fixed tools when upstreams are configured", async () => {
     const { tools } = await client.listTools();
     expect(tools.map((t) => t.name).sort()).toEqual([
       "skill_find",
       "skill_load",
+      "skill_read_file",
       "skilljit_stats",
       "tool_call",
       "tool_find",

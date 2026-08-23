@@ -10,6 +10,7 @@ CREATE TABLE IF NOT EXISTS skills (
   source       TEXT NOT NULL,
   description  TEXT NOT NULL,
   body         TEXT NOT NULL,
+  files_json    TEXT,
   install_count INTEGER,
   audit_status  TEXT,
   updated_at    TEXT NOT NULL
@@ -20,6 +21,13 @@ CREATE VIRTUAL TABLE IF NOT EXISTS skills_fts USING fts5(
   name,
   description,
   tokenize = 'porter unicode61'
+);
+
+CREATE TABLE IF NOT EXISTS ledger_totals (
+  id             INTEGER PRIMARY KEY CHECK (id = 1),
+  baseline_tokens INTEGER NOT NULL DEFAULT 0,
+  actual_tokens   INTEGER NOT NULL DEFAULT 0,
+  session_count   INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS tools (
@@ -67,6 +75,21 @@ export class Catalog {
     this.db = new Database(dbPath);
     this.db.pragma("journal_mode = WAL");
     this.db.exec(SCHEMA);
+    this.migrate();
+  }
+
+  /** Additive, idempotent schema migrations for catalogs created by older
+   * skilljit versions — CREATE TABLE IF NOT EXISTS only runs for a table
+   * that doesn't exist yet, so a pre-existing catalog.db needs this to
+   * pick up new columns. */
+  private migrate(): void {
+    const columns = this.db.prepare(`PRAGMA table_info(skills)`).all() as { name: string }[];
+    if (!columns.some((c) => c.name === "files_json")) {
+      this.db.exec(`ALTER TABLE skills ADD COLUMN files_json TEXT`);
+    }
+    this.db.exec(
+      `INSERT OR IGNORE INTO ledger_totals (id, baseline_tokens, actual_tokens, session_count) VALUES (1, 0, 0, 0)`,
+    );
   }
 
   close(): void {
@@ -77,13 +100,14 @@ export class Catalog {
 
   upsertSkills(skills: SkillRecord[]): void {
     const upsert = this.db.prepare(`
-      INSERT INTO skills (id, name, source, description, body, install_count, audit_status, updated_at)
-      VALUES (@id, @name, @source, @description, @body, @installCount, @auditStatus, @updatedAt)
+      INSERT INTO skills (id, name, source, description, body, files_json, install_count, audit_status, updated_at)
+      VALUES (@id, @name, @source, @description, @body, @filesJson, @installCount, @auditStatus, @updatedAt)
       ON CONFLICT(id) DO UPDATE SET
         name = excluded.name,
         source = excluded.source,
         description = excluded.description,
         body = excluded.body,
+        files_json = excluded.files_json,
         install_count = excluded.install_count,
         audit_status = excluded.audit_status,
         updated_at = excluded.updated_at
@@ -99,6 +123,7 @@ export class Catalog {
           source: s.source,
           description: s.description,
           body: s.body,
+          filesJson: s.files && s.files.length > 0 ? JSON.stringify(s.files) : null,
           installCount: s.installCount ?? null,
           auditStatus: s.auditStatus ?? "unaudited",
           updatedAt: s.updatedAt,
@@ -240,6 +265,40 @@ export class Catalog {
     const row = this.db.prepare(`SELECT COUNT(*) AS c FROM tools`).get() as { c: number };
     return row.c;
   }
+
+  // ---- Cross-session token ledger ----------------------------------------
+  // Every skilljit session/tab shares this catalog.db, so these totals
+  // accumulate across all of them — the fix for "N tabs open means N tabs
+  // each independently paying the traditional baseline cost."
+
+  /** Adds to the all-time baseline total and counts one more session. */
+  addGlobalLedgerBaseline(deltaTokens: number): void {
+    if (deltaTokens === 0) return;
+    this.db
+      .prepare(`UPDATE ledger_totals SET baseline_tokens = baseline_tokens + ? WHERE id = 1`)
+      .run(deltaTokens);
+  }
+
+  addGlobalLedgerActual(deltaTokens: number): void {
+    if (deltaTokens === 0) return;
+    this.db.prepare(`UPDATE ledger_totals SET actual_tokens = actual_tokens + ? WHERE id = 1`).run(deltaTokens);
+  }
+
+  /** Call once per server startup — this is what makes sessionCount count tabs. */
+  recordGlobalSessionStart(): void {
+    this.db.exec(`UPDATE ledger_totals SET session_count = session_count + 1 WHERE id = 1`);
+  }
+
+  getGlobalLedgerTotals(): { baselineTokens: number; actualTokens: number; sessionCount: number } {
+    const row = this.db
+      .prepare(`SELECT baseline_tokens, actual_tokens, session_count FROM ledger_totals WHERE id = 1`)
+      .get() as { baseline_tokens: number; actual_tokens: number; session_count: number };
+    return {
+      baselineTokens: row.baseline_tokens,
+      actualTokens: row.actual_tokens,
+      sessionCount: row.session_count,
+    };
+  }
 }
 
 function rowToSkill(row: any): SkillRecord {
@@ -249,6 +308,7 @@ function rowToSkill(row: any): SkillRecord {
     source: row.source,
     description: row.description,
     body: row.body,
+    files: row.files_json ? JSON.parse(row.files_json) : undefined,
     installCount: row.install_count ?? undefined,
     auditStatus: row.audit_status ?? "unaudited",
     updatedAt: row.updated_at,

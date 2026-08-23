@@ -3,6 +3,7 @@ from pathlib import Path
 import pytest
 
 from skilljit import Catalog
+from skilljit.catalog import SkillFile
 
 
 def test_get_skill_by_id(seeded_db: Path):
@@ -38,15 +39,29 @@ def test_search_no_match_returns_empty(seeded_db: Path):
 
 def test_count(seeded_db: Path):
     with Catalog(seeded_db) as catalog:
-        assert catalog.count() == 2
+        assert catalog.count() == 3
 
 
 def test_list_skill_meta(seeded_db: Path):
     with Catalog(seeded_db) as catalog:
         meta = catalog.list_skill_meta()
-        assert sorted(name for name, _ in meta) == ["pdf-processing", "postgres-migrate"]
+        assert sorted(name for name, _ in meta) == ["docker-expert", "pdf-processing", "postgres-migrate"]
 
 
 def test_missing_db_raises_clear_error(tmp_path: Path):
     with pytest.raises(FileNotFoundError, match="skilljit sync"):
         Catalog(tmp_path / "does-not-exist.db")
+
+
+def test_get_skill_with_bundled_files(seeded_db: Path):
+    with Catalog(seeded_db) as catalog:
+        skill = catalog.get_skill("acme/repo/docker-expert")
+        assert skill is not None
+        assert skill.files == [SkillFile(path="references/checklist.md", content="- pin base image")]
+
+
+def test_get_skill_without_bundled_files_leaves_files_none(seeded_db: Path):
+    with Catalog(seeded_db) as catalog:
+        skill = catalog.get_skill("acme/repo/pdf-processing")
+        assert skill is not None
+        assert skill.files is None

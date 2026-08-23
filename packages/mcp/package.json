@@ -1,7 +1,7 @@
 {
   "name": "@skilljit/mcp",
-  "version": "0.1.0",
-  "description": "MCP stdio server exposing skilljit's fixed 5-tool surface for just-in-time skill and MCP-tool routing",
+  "version": "0.1.1",
+  "description": "MCP stdio server exposing skilljit's fixed tool surface for just-in-time skill and MCP-tool routing",
   "type": "module",
   "license": "MIT",
   "repository": {

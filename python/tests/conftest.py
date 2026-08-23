@@ -12,6 +12,7 @@ CREATE TABLE skills (
   source       TEXT NOT NULL,
   description  TEXT NOT NULL,
   body         TEXT NOT NULL,
+  files_json    TEXT,
   install_count INTEGER,
   audit_status  TEXT,
   updated_at    TEXT NOT NULL
@@ -34,6 +35,7 @@ def seeded_db(tmp_path: Path) -> Path:
             "github:acme/repo",
             "Plan and run zero-downtime Postgres schema migrations.",
             "# Postgres migrations\n\nUse a shadow table.",
+            None,
             42,
             "pass",
             "2026-01-01T00:00:00.000Z",
@@ -46,11 +48,23 @@ def seeded_db(tmp_path: Path) -> Path:
             "# PDF processing\n\nUse pdfplumber.",
             None,
             None,
+            None,
+            "2026-01-01T00:00:00.000Z",
+        ),
+        (
+            "acme/repo/docker-expert",
+            "docker-expert",
+            "github:acme/repo",
+            "Write production Dockerfiles.",
+            "# Docker\n\nSee references/checklist.md.",
+            '[{"path": "references/checklist.md", "content": "- pin base image"}]',
+            None,
+            None,
             "2026-01-01T00:00:00.000Z",
         ),
     ]
     conn.executemany(
-        "INSERT INTO skills VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO skills VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
         rows,
     )
     conn.executemany(

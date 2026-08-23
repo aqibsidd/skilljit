@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { Command } from "commander";
-import { Catalog, defaultCatalogPath } from "@skilljit/core";
+import { Catalog, defaultCatalogPath, DEFAULT_GITHUB_SOURCES } from "@skilljit/core";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { createServer } from "@skilljit/mcp";
 import { latestAdoption, resolveManagedUpstreams } from "@skilljit/proxy";
@@ -19,15 +19,52 @@ program
   )
   .version("0.1.0");
 
+function parseRepoSlug(value: string, previous: { owner: string; repo: string }[]): { owner: string; repo: string }[] {
+  const slash = value.indexOf("/");
+  if (slash <= 0 || slash === value.length - 1) {
+    throw new Error(`--repo expects "owner/repo", got "${value}"`);
+  }
+  return [...previous, { owner: value.slice(0, slash), repo: value.slice(slash + 1) }];
+}
+
+function collect(value: string, previous: string[]): string[] {
+  return [...previous, value];
+}
+
 program
   .command("sync")
   .description("Refresh the local skill catalog from configured GitHub sources")
   .option("--db <path>", "catalog db path", defaultCatalogPath())
-  .action(async (options: { db: string }) => {
-    const result = await runSync({ dbPath: options.db, log: (l) => console.log(l) });
+  .option(
+    "--repo <owner/repo>",
+    "additional GitHub repo to sync, on top of the built-in defaults (repeatable)",
+    parseRepoSlug,
+    [] as { owner: string; repo: string }[],
+  )
+  .option(
+    "--git <url>",
+    "arbitrary git remote to sync via clone + worktree — self-hosted, GitLab, or an " +
+      "SSH-authenticated private repo, using whatever git credentials are already set up " +
+      "on this machine (repeatable, no GitHub API token needed)",
+    collect,
+    [] as string[],
+  )
+  .option("--token <token>", "GitHub token for --repo sources (or set SKILLJIT_GITHUB_TOKEN)")
+  .action(async (options: { db: string; repo: { owner: string; repo: string }[]; git: string[]; token?: string }) => {
+    const sources = [...DEFAULT_GITHUB_SOURCES, ...options.repo];
+    const result = await runSync({
+      dbPath: options.db,
+      sources,
+      gitSources: options.git,
+      token: options.token,
+      log: (l) => console.log(l),
+    });
     console.log(`\nDone. ${result.total} skill(s) in catalog.`);
     if (result.failedSources.length > 0) {
-      console.log(`${result.failedSources.length} source(s) failed to sync (see above).`);
+      console.log(`${result.failedSources.length} GitHub source(s) failed to sync (see above).`);
+    }
+    if (result.failedGitSources.length > 0) {
+      console.log(`${result.failedGitSources.length} git source(s) failed to sync (see above).`);
     }
   });
 

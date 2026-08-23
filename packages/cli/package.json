@@ -1,6 +1,6 @@
 {
   "name": "skilljit",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Just-in-time skill and MCP tool routing for Claude — install thousands of skills at the token cost of one.",
   "type": "module",
   "license": "MIT",

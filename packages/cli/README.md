@@ -90,25 +90,62 @@ skilljit — never mutates the original), `skilljit adopt <configPath>` (apply i
 `skilljit doctor [configPath]` (verify upstreams still work), `skilljit restore
 <configPath>` (undo `adopt`).
 
-## The five tools
+## Adding your own skills to `sync`
+
+By default `sync` only pulls from a small curated list of public repos. To add your
+own:
+
+```bash
+# Another public (or your-token-authenticated private) GitHub repo:
+skilljit sync --repo your-org/internal-skills --token "$SKILLJIT_GITHUB_TOKEN"
+
+# Any git remote at all — self-hosted, GitLab, Bitbucket, or a private repo
+# reached over SSH — using whatever git credentials are already set up on
+# this machine. No GitHub API token needed for this path.
+skilljit sync --git git@git.internal.example.com:team/skills.git
+```
+
+Both flags are repeatable. `--git` sources are ingested via a bare mirror clone plus
+`git worktree` rather than the GitHub API: the first sync pays for a full clone, every
+sync after that is a cheap `git fetch` + worktree checkout — no rate limit, no token,
+works against anything `git` itself can reach.
+
+## The six tools
 
 skilljit exposes a fixed surface — it never grows or shrinks at runtime.
 
 | Tool | Returns |
 |---|---|
 | `skill_find(query, limit=8)` | Cheap candidates: id, source, one-line description, install count, audit status. |
-| `skill_load(name)` | Full SKILL.md body for one skill by id. The only point a skill's full content enters context. |
+| `skill_load(name)` | Full SKILL.md body for one skill by id, plus a list of any bundled file paths (not their content). The main point a skill's content enters context. |
+| `skill_read_file(name, path)` | One bundled reference doc or helper script's content, by a path `skill_load` listed. |
 | `tool_find(query, limit=8)` | Matching upstream MCP tools' full JSON Schema, across every connected server. |
 | `tool_call(server, tool, args)` | Generic dispatcher to the matched upstream server and tool. |
-| `skilljit_stats()` | Tokens saved this session vs. loading every cataloged skill (and configured tool) the traditional way. |
+| `skilljit_stats()` | Tokens saved this session, and cumulatively across every skilljit session/tab that's ever used this catalog — see below. |
 
-`skill_find` → `skill_load` is progressive disclosure rebuilt as a **pull**: the
-always-loaded cost stops scaling with catalog size.
+`skill_find` → `skill_load` → `skill_read_file` is progressive disclosure rebuilt as
+a **pull**, all the way down: the always-loaded cost stops scaling with catalog size,
+and a skill's bundled reference docs/scripts stay out of context until named by path,
+even after the skill itself has been loaded.
 
 `tool_find` and `tool_call` only appear once you've configured upstream MCP servers
-via `skilljit adopt` (see below) — run skills-only and the surface is 3 tools, not 5.
+via `skilljit adopt` (see below) — run skills-only and the surface is 4 tools, not 6.
 This is what makes the skills half independently shippable and testable from the
 proxy half.
+
+## Multiple tabs / parallel sessions
+
+Running several Claude Code tabs at once for different tasks is exactly where the
+"every tab pays for every installed skill" cost multiplies — N tabs open means that
+per-turn overhead is being paid N times simultaneously. skilljit already collapses
+that per-tab cost to a fixed few tools regardless of catalog size, but `skilljit_stats()`
+goes further: every session's baseline/actual numbers are also written into the shared
+`catalog.db` (the same file every tab's `skilljit serve` process already points at), so
+the reported totals are cumulative across every tab you've had open, not just the one
+you're asking from — and losing a tab doesn't lose that number, since it was already
+durably written, not held only in that tab's memory. This does not recover a lost tab's
+conversation itself — that's a Claude Code session feature (`claude --resume`), unrelated
+to skilljit.
 
 ## MCP proxy — routing your other MCP servers
 
