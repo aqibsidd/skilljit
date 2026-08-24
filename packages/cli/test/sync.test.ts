@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { Catalog } from "@skilljit/core";
 import { runSync } from "../src/commands/sync.js";
+import { writeIncidentsConfig } from "../src/commands/incidents.js";
 
 function git(cwd: string, args: string[]): void {
   execFileSync("git", args, { cwd, stdio: "ignore" });
@@ -134,5 +135,48 @@ describe("runSync", () => {
       fs.rmSync(srcRepo, { recursive: true, force: true });
       fs.rmSync(cacheDir, { recursive: true, force: true });
     }
+  });
+
+  it("also ingests a configured incidents repo, into the same catalog", async () => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), "skilljit-cli-"));
+    const dbPath = path.join(dir, "catalog.db");
+    const stateDir = path.join(dir, "state");
+
+    const { execFileSync } = await import("node:child_process");
+    const incidentsRepo = fs.mkdtempSync(path.join(os.tmpdir(), "skilljit-cli-incidents-"));
+    execFileSync("git", ["init", "-q", "-b", "main"], { cwd: incidentsRepo });
+    fs.mkdirSync(path.join(incidentsRepo, "incidents"));
+    const { serializeIncidentMd } = await import("@skilljit/core");
+    fs.writeFileSync(
+      path.join(incidentsRepo, "incidents", "2026-08-24-a1b2c3d.md"),
+      serializeIncidentMd({
+        symptom: "Checkout timed out.",
+        investigation: "x",
+        rootCause: "y",
+        fix: "z",
+        commitSha: "a1b2c3d4",
+        repo: `git:${incidentsRepo}`,
+        capturedAt: "2026-08-24T00:00:00.000Z",
+        verified: false,
+      }),
+    );
+    execFileSync("git", ["add", "-A"], { cwd: incidentsRepo });
+    execFileSync(
+      "git",
+      ["-c", "user.email=t@t.com", "-c", "user.name=t", "commit", "-q", "-m", "add incident"],
+      { cwd: incidentsRepo },
+    );
+    writeIncidentsConfig(stateDir, { repoUrl: incidentsRepo, localClonePath: incidentsRepo });
+
+    const result = await runSync({ dbPath, sources: [], stateDir, log: () => {} });
+    expect(result.incidentsIngested).toBe(1);
+
+    const { Catalog } = await import("@skilljit/core");
+    const catalog = new Catalog(dbPath);
+    expect(catalog.incidentCount()).toBe(1);
+    catalog.close();
+
+    fs.rmSync(incidentsRepo, { recursive: true, force: true });
+    fs.rmSync(stateDir, { recursive: true, force: true });
   });
 });

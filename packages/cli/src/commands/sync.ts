@@ -1,5 +1,6 @@
-import { Catalog, ingestGithubRepo, ingestLocalGitRepo, DEFAULT_GITHUB_SOURCES } from "@skilljit/core";
+import { Catalog, ingestGithubRepo, ingestLocalGitRepo, ingestIncidentsFromGitRepo, DEFAULT_GITHUB_SOURCES } from "@skilljit/core";
 import type { ExecFileFn } from "@skilljit/core";
+import { readIncidentsConfig } from "./incidents.js";
 
 export interface SyncOptions {
   dbPath: string;
@@ -12,6 +13,10 @@ export interface SyncOptions {
   gitCacheDir?: string;
   /** GitHub token for the sources above (or set SKILLJIT_GITHUB_TOKEN). */
   token?: string;
+  /** Where skilljit's incidents.json config (from `skilljit incidents init`)
+   * lives, if any — when present and configured, sync also ingests that
+   * repo's incidents into the same catalog. */
+  stateDir?: string;
   fetchImpl?: typeof fetch;
   execFileImpl?: ExecFileFn;
   log?: (line: string) => void;
@@ -23,6 +28,7 @@ export interface SyncResult {
   failedSources: { owner: string; repo: string }[];
   perGitSource: { url: string; count: number }[];
   failedGitSources: { url: string }[];
+  incidentsIngested: number;
 }
 
 /**
@@ -67,7 +73,25 @@ export async function runSync(opts: SyncOptions): Promise<SyncResult> {
         log(`  failed: ${(err as Error).message}`);
       }
     }
-    return { total: catalog.count(), perSource, failedSources, perGitSource, failedGitSources };
+    let incidentsIngested = 0;
+    if (opts.stateDir) {
+      const incidentsConfig = readIncidentsConfig(opts.stateDir);
+      if (incidentsConfig) {
+        log(`syncing incidents from ${incidentsConfig.repoUrl} ...`);
+        try {
+          const incidents = await ingestIncidentsFromGitRepo(incidentsConfig.repoUrl, {
+            execFileImpl: opts.execFileImpl,
+          });
+          catalog.upsertIncidents(incidents);
+          incidentsIngested = incidents.length;
+          log(`  ${incidents.length} incident(s) found`);
+        } catch (err) {
+          log(`  failed to sync incidents: ${(err as Error).message}`);
+        }
+      }
+    }
+
+    return { total: catalog.count(), perSource, failedSources, perGitSource, failedGitSources, incidentsIngested };
   } finally {
     catalog.close();
   }

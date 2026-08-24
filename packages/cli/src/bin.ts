@@ -2,6 +2,7 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
+import os from "node:os";
 import { Command } from "commander";
 import { Catalog, defaultCatalogPath, DEFAULT_GITHUB_SOURCES } from "@skilljit/core";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
@@ -10,6 +11,7 @@ import { latestAdoption, resolveManagedUpstreams } from "@skilljit/proxy";
 import { runSync } from "./commands/sync.js";
 import { runSearch, formatSearchResults } from "./commands/search.js";
 import { defaultStateDir, cmdInit, cmdAdopt, cmdRestore, cmdDoctor } from "./commands/proxy.js";
+import { cmdIncidentsInit, cmdIncidentsInstallHook, runCaptureIncident } from "./commands/incidents.js";
 
 // Read the real version from this package's own package.json rather than
 // hardcoding a string here that silently drifts from every release.
@@ -67,6 +69,7 @@ program
       sources,
       gitSources: options.git,
       token: options.token,
+      stateDir: defaultStateDir(),
       log: (l) => console.log(l),
     });
     console.log(`\nDone. ${result.total} skill(s) in catalog.`);
@@ -156,6 +159,35 @@ program
       return;
     }
     await cmdDoctor(configPath, undefined, (l) => console.log(l));
+  });
+
+const incidentsCmd = program.command("incidents").description("Capture and share debugging context across a team");
+
+incidentsCmd
+  .command("init <repoUrl>")
+  .description("Configure the git repo incidents are captured to and synced from")
+  .action(async (repoUrl: string) => {
+    await cmdIncidentsInit({ repoUrl, stateDir: defaultStateDir() }, (l) => console.log(l));
+  });
+
+incidentsCmd
+  .command("install-hook")
+  .description("Install the PostToolUse hook that captures incidents on fix-like git commits")
+  .option("--yes", "actually write the change (otherwise this is a dry run)")
+  .option("--settings-path <path>", "settings.json path", path.join(os.homedir(), ".claude", "settings.json"))
+  .action(async (options: { yes?: boolean; settingsPath: string }) => {
+    await cmdIncidentsInstallHook({ settingsPath: options.settingsPath, yes: options.yes }, (l) => console.log(l));
+  });
+
+program
+  .command("capture-incident")
+  .description("Internal: invoked by the PostToolUse hook, reads its JSON payload from stdin")
+  .action(async () => {
+    const chunks: Buffer[] = [];
+    for await (const chunk of process.stdin) chunks.push(chunk as Buffer);
+    const payload = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+    const result = await runCaptureIncident(payload, { stateDir: defaultStateDir() });
+    if (result.captured) console.log(`skilljit: ${result.reason}`);
   });
 
 program.parseAsync(process.argv).catch((err) => {
