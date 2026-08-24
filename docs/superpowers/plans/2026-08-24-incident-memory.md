@@ -1507,7 +1507,7 @@ describe("runCaptureIncident", () => {
     fs.rmSync(codeRepo, { recursive: true, force: true });
   });
 
-  it("fails closed and writes nothing if redaction throws", async () => {
+  it("fails closed and writes nothing when the synthesized response has the wrong shape", async () => {
     stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "skilljit-capture-"));
     localClonePath = path.join(stateDir, "incidents-write");
     fs.mkdirSync(localClonePath, { recursive: true });
@@ -1517,10 +1517,12 @@ describe("runCaptureIncident", () => {
     const transcriptPath = path.join(stateDir, "transcript.jsonl");
     fs.writeFileSync(transcriptPath, "x");
 
-    // A synthesizeImpl that resolves to something that is not a string
-    // once "parsed" forces the internal redaction call to throw — simulated
-    // here by returning JSON whose fields are non-strings, which fails the
-    // shape check before redaction even runs, matching "fails closed."
+    // This exercises the synthesizeIncident shape-check fail-closed path
+    // (Task 9), not redactSecrets's own fail-closed path — redactSecrets
+    // catches internally and can't be made to throw through a realistic
+    // string input, so its fail-closed behavior is unit-tested directly
+    // in Task 2's redact.test.ts instead. Both are real fail-closed exits
+    // from the same pipeline; this test covers the reachable one.
     const fakeSynthesize = async () => JSON.stringify({ symptom: 1, investigation: 2, rootCause: 3, fix: 4 });
 
     const result = await runCaptureIncident(makePayload({ transcript_path: transcriptPath, cwd: stateDir }), {
