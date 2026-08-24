@@ -99,3 +99,69 @@ export async function cmdIncidentsInstallHook(opts: IncidentsInstallHookOptions,
   fs.writeFileSync(opts.settingsPath, JSON.stringify(settings, null, 2));
   log(`Hook installed in ${opts.settingsPath}.`);
 }
+
+const FIX_MESSAGE_RE = /^(fix|fixes|fixed)[:(]|fixes #|closes #|resolves #/i;
+const INLINE_MESSAGE_RE = /-m\s+"([^"]*)"|-m\s+'([^']*)'/;
+
+/** Extracts a `git commit -m "..."` message and checks it against a
+ * fix-commit heuristic. A `git commit` with no inline -m (opens $EDITOR)
+ * is intentionally not matched — this is a v1 scope limit, not a bug. */
+export function looksLikeFixCommit(bashCommand: string): boolean {
+  if (!/\bgit\s+commit\b/.test(bashCommand)) return false;
+  const messageMatch = INLINE_MESSAGE_RE.exec(bashCommand);
+  if (!messageMatch) return false;
+  const message = messageMatch[1] ?? messageMatch[2] ?? "";
+  return FIX_MESSAGE_RE.test(message);
+}
+
+export interface SynthesizedIncident {
+  symptom: string;
+  investigation: string;
+  rootCause: string;
+  fix: string;
+}
+
+function defaultSynthesizeImpl(prompt: string): Promise<string> {
+  // Reuses the execFileAsync already defined at module scope in Task 7 —
+  // no second promisify(execFile) needed.
+  return execFileAsync("claude", ["-p", prompt, "--output-format", "json"]).then((r) => r.stdout);
+}
+
+/**
+ * Synthesizes the four narrative incident fields from a session
+ * transcript and a commit diff. Shells out to `claude -p` by default
+ * (Claude Code's own non-interactive mode — already installed and
+ * authenticated wherever the capture hook runs), injectable for tests.
+ */
+export async function synthesizeIncident(
+  transcript: string,
+  diff: string,
+  synthesizeImpl: (prompt: string) => Promise<string> = defaultSynthesizeImpl,
+): Promise<SynthesizedIncident> {
+  const prompt =
+    "You are summarizing a debugging session that just ended in a bug fix, for a teammate " +
+    "who might hit the same problem later. From the transcript and diff below, respond with " +
+    'ONLY a JSON object: {"symptom": "...", "investigation": "...", "rootCause": "...", "fix": "..."}. ' +
+    "Paraphrase — never quote raw error output, log lines, or literal values verbatim; use " +
+    "placeholders for anything that looks like a value rather than a pattern.\n\n" +
+    `TRANSCRIPT:\n${transcript}\n\nDIFF:\n${diff}`;
+
+  const raw = await synthesizeImpl(prompt);
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw new Error(`synthesizeIncident: response was not valid JSON: ${raw.slice(0, 200)}`);
+  }
+  if (
+    !parsed ||
+    typeof parsed !== "object" ||
+    typeof (parsed as any).symptom !== "string" ||
+    typeof (parsed as any).investigation !== "string" ||
+    typeof (parsed as any).rootCause !== "string" ||
+    typeof (parsed as any).fix !== "string"
+  ) {
+    throw new Error(`synthesizeIncident: response was missing required fields: ${raw.slice(0, 200)}`);
+  }
+  return parsed as SynthesizedIncident;
+}

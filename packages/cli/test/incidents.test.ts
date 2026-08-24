@@ -110,3 +110,51 @@ describe("cmdIncidentsInstallHook", () => {
     expect(settings.hooks.PostToolUse).toHaveLength(1);
   });
 });
+
+describe("looksLikeFixCommit", () => {
+  it("matches conventional fix-prefixed messages", async () => {
+    const { looksLikeFixCommit } = await import("../src/commands/incidents.js");
+    expect(looksLikeFixCommit(`git commit -m "fix: checkout timeout under load"`)).toBe(true);
+    expect(looksLikeFixCommit(`git commit -m 'fixes #123'`)).toBe(true);
+    expect(looksLikeFixCommit(`git commit -m "closes #45, resolved the race"`)).toBe(true);
+  });
+
+  it("does not match unrelated commits", async () => {
+    const { looksLikeFixCommit } = await import("../src/commands/incidents.js");
+    expect(looksLikeFixCommit(`git commit -m "add new dashboard widget"`)).toBe(false);
+  });
+
+  it("does not match non-commit bash commands", async () => {
+    const { looksLikeFixCommit } = await import("../src/commands/incidents.js");
+    expect(looksLikeFixCommit(`git status`)).toBe(false);
+    expect(looksLikeFixCommit(`npm test`)).toBe(false);
+  });
+
+  it("does not match a git commit with no inline message", async () => {
+    const { looksLikeFixCommit } = await import("../src/commands/incidents.js");
+    expect(looksLikeFixCommit(`git commit`)).toBe(false);
+  });
+});
+
+describe("synthesizeIncident", () => {
+  it("calls the injected synthesizeImpl and parses its JSON response", async () => {
+    const { synthesizeIncident } = await import("../src/commands/incidents.js");
+    const fakeSynthesize = async (_prompt: string) =>
+      JSON.stringify({
+        symptom: "Checkout timed out",
+        investigation: "Ruled out payments",
+        rootCause: "Lock contention",
+        fix: "Reran migration concurrently",
+      });
+
+    const result = await synthesizeIncident("transcript text", "diff text", fakeSynthesize);
+    expect(result.symptom).toBe("Checkout timed out");
+    expect(result.fix).toBe("Reran migration concurrently");
+  });
+
+  it("throws a clear error if the response isn't valid JSON with the expected fields", async () => {
+    const { synthesizeIncident } = await import("../src/commands/incidents.js");
+    const fakeSynthesize = async () => "not json";
+    await expect(synthesizeIncident("t", "d", fakeSynthesize)).rejects.toThrow(/synthes/i);
+  });
+});
