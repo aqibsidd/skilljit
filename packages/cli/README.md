@@ -58,6 +58,15 @@ See [`python/README.md`](https://github.com/aqibsidd/skilljit/blob/main/python/R
 for what that package does and doesn't do — it forwards the CLI to `npx -y skilljit`
 and adds a read-only `Catalog` for Python.
 
+### Node version support
+
+This package requires **Node 18+** — that floor comes directly from
+`@modelcontextprotocol/sdk`, which the MCP server it wraps depends on. There's no way
+around that without dropping MCP support. (`@skilljit/core`, the underlying
+catalog/search library with no MCP dependency, separately supports Node 16+ for
+anyone using it standalone — see the [main repo](https://github.com/aqibsidd/skilljit)
+for details.)
+
 ## Quickstart
 
 ```bash

@@ -1,6 +1,6 @@
 {
   "name": "@skilljit/proxy",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Upstream MCP server management, adoption/restore of client configs, and the tool_find/tool_call routing layer",
   "type": "module",
   "license": "MIT",
@@ -13,6 +13,9 @@
   "bugs": "https://github.com/aqibsidd/skilljit/issues",
   "publishConfig": {
     "access": "public"
+  },
+  "engines": {
+    "node": ">=18.0.0"
   },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

@@ -1,9 +1,16 @@
+import nodeFetch from "node-fetch";
 import { parseSkillMd } from "./parse.js";
 import { isProbablyBinaryPath } from "./files.js";
 import type { SkillRecord } from "../types.js";
 
+// Node's own global `fetch` only exists from Node 18 onward; skilljit
+// supports Node 16+, so fall back to node-fetch when it's missing rather
+// than crashing with "fetch is not defined".
+const defaultFetch = (globalThis.fetch ?? (nodeFetch as unknown as typeof fetch)) satisfies typeof fetch;
+
 export interface GithubIngestOptions {
-  /** Injectable for testing; defaults to the global fetch. */
+  /** Injectable for testing; defaults to the global fetch (Node 18+) or
+   * node-fetch as a polyfill on Node 16/17. */
   fetchImpl?: typeof fetch;
   /** Personal access token (or SKILLJIT_GITHUB_TOKEN env var) for the 5000/hr rate limit. */
   token?: string;
@@ -21,7 +28,7 @@ function authHeaders(opts: GithubIngestOptions): Record<string, string> {
 }
 
 async function githubApiFetch(url: string, opts: GithubIngestOptions): Promise<Response> {
-  const fetchImpl = opts.fetchImpl ?? fetch;
+  const fetchImpl = opts.fetchImpl ?? defaultFetch;
   const res = await fetchImpl(url, {
     headers: {
       Accept: "application/vnd.github+json",
@@ -52,7 +59,7 @@ async function fetchRawFile(
   filePath: string,
   opts: GithubIngestOptions,
 ): Promise<string | null> {
-  const fetchImpl = opts.fetchImpl ?? fetch;
+  const fetchImpl = opts.fetchImpl ?? defaultFetch;
   const rawUrl = `https://raw.githubusercontent.com/${owner}/${repo}/${ref}/${filePath}`;
   const res = await fetchImpl(rawUrl, { headers: authHeaders(opts) } as RequestInit);
   if (!res.ok) return null;

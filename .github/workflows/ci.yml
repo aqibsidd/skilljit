@@ -34,3 +34,30 @@ jobs:
           python-version: "3.12"
       - run: pip install -e python/ pytest
       - run: pytest python/tests -q
+
+  # @skilljit/core claims Node 16+ (unlike proxy/mcp/cli, which need 18+ from
+  # @modelcontextprotocol/sdk itself). vitest requires Node >=20, so it can't
+  # verify that floor directly — this runs a plain-node smoke test instead,
+  # against real Node 16 and 18. better-sqlite3 has no prebuilt binary for
+  # Node 16 on any platform, so the 16 leg genuinely exercises node-gyp
+  # compiling it from source, not just "does the declared version install."
+  core-node-compat:
+    strategy:
+      matrix:
+        node-version: ["16", "18"]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ matrix.node-version }}
+      # node-gyp's Python tooling needs the pre-3.12 `distutils` module,
+      # removed in newer Python — only matters for the Node 16 leg, which
+      # has no prebuilt binary and must compile from source.
+      - uses: actions/setup-python@v7
+        if: matrix.node-version == '16'
+        with:
+          python-version: "3.11"
+      - run: npm ci
+      - run: npm run build -w packages/core
+      - run: node packages/core/scripts/node-compat-smoke-test.mjs

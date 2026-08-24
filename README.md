@@ -57,6 +57,22 @@ pip install skilljit
 See [`python/README.md`](python/README.md) for what that package does and doesn't do
 — it forwards the CLI to `npx -y skilljit` and adds a read-only `Catalog` for Python.
 
+### Node version support
+
+`skilljit`, `@skilljit/mcp`, and `@skilljit/proxy` require **Node 18+** — that floor
+comes directly from `@modelcontextprotocol/sdk`, which the MCP server and proxy layer
+depend on and which itself requires 18+. There's no way around this without dropping
+MCP support.
+
+`@skilljit/core` (the catalog/search library, no MCP dependency) supports **Node
+16+** for anyone using its `Catalog`/`ingestGithubRepo` API directly. On Node 18+ this
+is a zero-compile install (`better-sqlite3` ships a prebuilt binary). On Node 16/17,
+`better-sqlite3` has no prebuilt binary for that ABI on any platform, so npm falls
+back to compiling it from source via `node-gyp` — this needs a C++ toolchain and a
+Python with the (pre-3.12) `distutils` module available. That's a standard requirement
+for native Node modules, not a skilljit-specific step, but it does mean Node 16/17
+installs of `@skilljit/core` aren't guaranteed zero-friction the way 18+ is.
+
 ## Quickstart
 
 ```bash
