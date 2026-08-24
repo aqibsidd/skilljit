@@ -257,11 +257,28 @@ describe("runCaptureIncident", () => {
   });
 
   it("fails closed and writes nothing when the synthesized response has the wrong shape", async () => {
+    const { execFileSync } = await import("node:child_process");
     stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "skilljit-capture-"));
     localClonePath = path.join(stateDir, "incidents-write");
     fs.mkdirSync(localClonePath, { recursive: true });
     const { writeIncidentsConfig, runCaptureIncident } = await import("../src/commands/incidents.js");
     writeIncidentsConfig(stateDir, { repoUrl: "unused", localClonePath });
+
+    // A real git repo with a real commit as `cwd`, so the pipeline gets
+    // past `git rev-parse`/`git show` and actually reaches
+    // synthesizeIncident — otherwise this would exercise the earlier
+    // git-failure fail-closed path instead of the one this test is named
+    // for and documents below.
+    const srcRepo = path.join(stateDir, "src-repo");
+    fs.mkdirSync(srcRepo, { recursive: true });
+    execFileSync("git", ["init", "-q", "-b", "main"], { cwd: srcRepo });
+    fs.writeFileSync(path.join(srcRepo, "app.ts"), "// fixed\n");
+    execFileSync("git", ["add", "-A"], { cwd: srcRepo });
+    execFileSync(
+      "git",
+      ["-c", "user.email=t@t.com", "-c", "user.name=t", "commit", "-q", "-m", "fix: checkout timeout"],
+      { cwd: srcRepo },
+    );
 
     const transcriptPath = path.join(stateDir, "transcript.jsonl");
     fs.writeFileSync(transcriptPath, "x");
@@ -274,7 +291,7 @@ describe("runCaptureIncident", () => {
     // from the same pipeline; this test covers the reachable one.
     const fakeSynthesize = async () => JSON.stringify({ symptom: 1, investigation: 2, rootCause: 3, fix: 4 });
 
-    const result = await runCaptureIncident(makePayload({ transcript_path: transcriptPath, cwd: stateDir }), {
+    const result = await runCaptureIncident(makePayload({ transcript_path: transcriptPath, cwd: srcRepo }), {
       stateDir,
       synthesizeImpl: fakeSynthesize,
     });
