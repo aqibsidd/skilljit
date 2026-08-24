@@ -26,6 +26,8 @@ describe("serializeIncidentMd + parseIncidentMd", () => {
     expect(parsed?.commitSha).toBe(record.commitSha);
     expect(parsed?.filesTouched).toEqual(record.filesTouched);
     expect(parsed?.verified).toBe(false);
+    expect(parsed?.repo).toBe(record.repo);
+    expect(parsed?.capturedAt).toBe(record.capturedAt);
   });
 
   it("derives id from source + short commit sha", () => {
