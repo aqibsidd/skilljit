@@ -16,16 +16,6 @@ export interface ExecFileFn {
   (command: string, args: string[]): Promise<{ stdout: string; stderr: string }>;
 }
 
-export interface LocalGitIngestOptions {
-  /** Where bare mirror clones are cached between syncs. Defaults to
-   * ~/.skilljit/git-cache. */
-  cacheDir?: string;
-  /** Branch/tag/commit to check out. Defaults to the remote's HEAD. */
-  ref?: string;
-  /** Injectable for tests; defaults to shelling out to the real `git`. */
-  execFileImpl?: ExecFileFn;
-}
-
 function cacheKeyForUrl(url: string): string {
   return crypto.createHash("sha256").update(url).digest("hex").slice(0, 16);
 }
@@ -41,34 +31,30 @@ function walkSkillDirs(root: string, dir: string, out: string[]): void {
   }
 }
 
+export interface WithGitWorktreeOptions {
+  cacheDir?: string;
+  ref?: string;
+  execFileImpl?: ExecFileFn;
+}
+
 /**
- * Ingest every SKILL.md in an arbitrary git repository — self-hosted,
- * GitLab, Bitbucket, an internal server, or a private GitHub repo reached
- * over SSH — anywhere the `git` binary on this machine can already
- * authenticate (SSH key, git-credential helper), no GitHub API token
- * needed at all.
- *
- * Uses a persistent bare mirror clone under `cacheDir` plus a throwaway
- * `git worktree add` per sync, instead of a fresh clone every time: the
- * first sync pays for a full clone, every sync after that is just a
- * `git fetch` (cheap, incremental) followed by a worktree checkout. The
- * worktree is removed again once ingestion finishes.
+ * Clone (or reuse a cached bare mirror of) an arbitrary git remote, check
+ * out a throwaway worktree, hand its path to `scan`, then clean up —
+ * regardless of whether `scan` throws. Shared by every content type that
+ * gets ingested from a git remote (skills today, incidents in Task 6),
+ * so the clone/fetch/worktree mechanics exist exactly once.
  */
-export async function ingestLocalGitRepo(
+export async function withGitWorktree<T>(
   url: string,
-  opts: LocalGitIngestOptions = {},
-): Promise<SkillRecord[]> {
+  opts: WithGitWorktreeOptions,
+  scan: (worktreeDir: string) => T | Promise<T>,
+): Promise<T> {
   const run: ExecFileFn = opts.execFileImpl ?? ((cmd, args) => execFileAsync(cmd, args));
   const cacheDir = opts.cacheDir ?? path.join(os.homedir(), ".skilljit", "git-cache");
   fs.mkdirSync(cacheDir, { recursive: true });
   const bareDir = path.join(cacheDir, `${cacheKeyForUrl(url)}.git`);
-  const source = `git:${url}`;
 
   if (!fs.existsSync(bareDir)) {
-    // --mirror, not --bare: a plain --bare clone doesn't set up a fetch
-    // refspec that updates local branch refs (and HEAD's target) on a
-    // later `git fetch` — only --mirror does, which is what makes the
-    // "clone once, fetch cheaply after" reuse actually pick up new commits.
     await run("git", ["clone", "--mirror", "--quiet", url, bareDir]);
   } else {
     await run("git", ["--git-dir", bareDir, "fetch", "--quiet", "--prune", "origin"]);
@@ -76,13 +62,32 @@ export async function ingestLocalGitRepo(
 
   const checkoutRef = opts.ref ?? "HEAD";
   const worktreeDir = fs.mkdtempSync(path.join(os.tmpdir(), "skilljit-wt-"));
-  // A worktree can't be added at a path that already exists as an empty
-  // dir in some git versions; remove it and let `worktree add` create it.
   fs.rmdirSync(worktreeDir);
 
   try {
     await run("git", ["--git-dir", bareDir, "worktree", "add", "--detach", "--quiet", worktreeDir, checkoutRef]);
+    return await scan(worktreeDir);
+  } finally {
+    await run("git", ["--git-dir", bareDir, "worktree", "remove", "--force", worktreeDir]).catch(() => {});
+    fs.rmSync(worktreeDir, { recursive: true, force: true });
+  }
+}
 
+export interface LocalGitIngestOptions extends WithGitWorktreeOptions {}
+
+/**
+ * Ingest every SKILL.md in an arbitrary git repository — self-hosted,
+ * GitLab, Bitbucket, an internal server, or a private GitHub repo reached
+ * over SSH — anywhere the `git` binary on this machine can already
+ * authenticate. See withGitWorktree for the clone/fetch/worktree mechanics
+ * this reuses.
+ */
+export async function ingestLocalGitRepo(
+  url: string,
+  opts: LocalGitIngestOptions = {},
+): Promise<SkillRecord[]> {
+  const source = `git:${url}`;
+  return withGitWorktree(url, opts, (worktreeDir) => {
     const skillDirs: string[] = [];
     walkSkillDirs(worktreeDir, worktreeDir, skillDirs);
 
@@ -104,10 +109,7 @@ export async function ingestLocalGitRepo(
       results.push(parsed);
     }
     return results;
-  } finally {
-    await run("git", ["--git-dir", bareDir, "worktree", "remove", "--force", worktreeDir]).catch(() => {});
-    fs.rmSync(worktreeDir, { recursive: true, force: true });
-  }
+  });
 }
 
 function collectSiblingFiles(root: string, dir: string, out: NonNullable<SkillRecord["files"]>): void {

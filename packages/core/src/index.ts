@@ -6,6 +6,6 @@ export { defaultCatalogPath } from "./paths.js";
 export { parseSkillMd } from "./ingest/parse.js";
 export { ingestGithubRepo } from "./ingest/github.js";
 export type { GithubIngestOptions } from "./ingest/github.js";
-export { ingestLocalGitRepo } from "./ingest/git-local.js";
-export type { LocalGitIngestOptions, ExecFileFn } from "./ingest/git-local.js";
+export { ingestLocalGitRepo, withGitWorktree } from "./ingest/git-local.js";
+export type { LocalGitIngestOptions, WithGitWorktreeOptions, ExecFileFn } from "./ingest/git-local.js";
 export { DEFAULT_GITHUB_SOURCES } from "./ingest/sources.js";
