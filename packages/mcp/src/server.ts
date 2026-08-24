@@ -33,6 +33,11 @@ export interface ServerHandle {
   catalog: Catalog;
   ledger: TokenLedger;
   upstreams?: UpstreamManager;
+  /** Set only when incidentsCatalogPath pointed at a different db file than
+   * catalogPath, so a second Catalog instance had to be opened. Callers own
+   * closing it — it's undefined (nothing extra to close) when incidents are
+   * unconfigured or share catalogPath's already-tracked instance. */
+  incidentsCatalog?: Catalog;
 }
 
 /**
@@ -193,9 +198,14 @@ export function createServer(opts: CreateServerOptions): ServerHandle {
     },
   );
 
+  let incidentsCatalog: Catalog | undefined;
   if (opts.incidentsCatalogPath) {
-    const incidentsCatalog =
-      opts.incidentsCatalogPath === opts.catalogPath ? catalog : new Catalog(opts.incidentsCatalogPath);
+    const isDistinctIncidentsCatalog = opts.incidentsCatalogPath !== opts.catalogPath;
+    const activeIncidentsCatalog = isDistinctIncidentsCatalog ? new Catalog(opts.incidentsCatalogPath) : catalog;
+    // Only expose (and thus make closeable by the caller) the instance this
+    // call actually opened — reusing `catalog` here would let a caller close
+    // it twice via both `handle.catalog` and `handle.incidentsCatalog`.
+    if (isDistinctIncidentsCatalog) incidentsCatalog = activeIncidentsCatalog;
 
     server.registerTool(
       "incident_find",
@@ -211,7 +221,7 @@ export function createServer(opts: CreateServerOptions): ServerHandle {
         },
       },
       async ({ symptom, limit }: { symptom: string; limit?: number }) => {
-        const hits = incidentsCatalog.searchIncidents(symptom, limit ?? 8);
+        const hits = activeIncidentsCatalog.searchIncidents(symptom, limit ?? 8);
         const payload = JSON.stringify(
           hits.map((h) => ({
             id: h.incident.id,
@@ -240,7 +250,7 @@ export function createServer(opts: CreateServerOptions): ServerHandle {
         },
       },
       async ({ id }: { id: string }) => {
-        const incident = incidentsCatalog.getIncident(id);
+        const incident = activeIncidentsCatalog.getIncident(id);
         if (!incident) {
           return {
             isError: true,
@@ -368,5 +378,5 @@ export function createServer(opts: CreateServerOptions): ServerHandle {
     },
   );
 
-  return { server, catalog, ledger, upstreams };
+  return { server, catalog, ledger, upstreams, incidentsCatalog };
 }
