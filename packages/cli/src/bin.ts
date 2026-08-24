@@ -180,7 +180,7 @@ incidentsCmd
   });
 
 program
-  .command("capture-incident")
+  .command("capture-incident", { hidden: true })
   .description("Internal: invoked by the PostToolUse hook, reads its JSON payload from stdin")
   .action(async () => {
     const chunks: Buffer[] = [];
