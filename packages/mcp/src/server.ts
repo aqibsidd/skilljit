@@ -22,6 +22,10 @@ export interface CreateServerOptions {
   upstreams?: UpstreamSpec[];
   /** Injectable for tests; defaults to spawning real child processes over stdio. */
   connectFn?: ConnectFn;
+  /** Path to a catalog db containing captured incidents. Enables
+   * incident_find/incident_load — omit to leave the tool surface
+   * unchanged for users who haven't opted into incident capture. */
+  incidentsCatalogPath?: string;
 }
 
 export interface ServerHandle {
@@ -188,6 +192,70 @@ export function createServer(opts: CreateServerOptions): ServerHandle {
       return { content: [{ type: "text" as const, text: file.content }] };
     },
   );
+
+  if (opts.incidentsCatalogPath) {
+    const incidentsCatalog =
+      opts.incidentsCatalogPath === opts.catalogPath ? catalog : new Catalog(opts.incidentsCatalogPath);
+
+    server.registerTool(
+      "incident_find",
+      {
+        title: "Find past incidents",
+        description:
+          "Search captured debugging incidents for one matching a symptom you're investigating, without " +
+          "loading the full investigation. Returns cheap candidates (id, symptom, root cause, verified status) " +
+          "— call incident_load on the one you want the full context for.",
+        inputSchema: {
+          symptom: z.string().describe("What you're observing, in your own words."),
+          limit: z.number().int().positive().max(50).optional().describe("Max candidates to return (default 8)."),
+        },
+      },
+      async ({ symptom, limit }: { symptom: string; limit?: number }) => {
+        const hits = incidentsCatalog.searchIncidents(symptom, limit ?? 8);
+        const payload = JSON.stringify(
+          hits.map((h) => ({
+            id: h.incident.id,
+            symptom: h.incident.symptom,
+            rootCause: h.incident.rootCause,
+            capturedAt: h.incident.capturedAt,
+            verified: h.incident.verified,
+          })),
+          null,
+          2,
+        );
+        recordActual("incident_find", payload);
+        return { content: [{ type: "text" as const, text: payload }] };
+      },
+    );
+
+    server.registerTool(
+      "incident_load",
+      {
+        title: "Load a past incident's full context",
+        description:
+          "Load the full investigation, root cause, and fix for one incident by its id, as returned by " +
+          "incident_find. This is the point where a teammate's prior debugging context enters yours.",
+        inputSchema: {
+          id: z.string().describe("The incident id, exactly as returned by incident_find."),
+        },
+      },
+      async ({ id }: { id: string }) => {
+        const incident = incidentsCatalog.getIncident(id);
+        if (!incident) {
+          return {
+            isError: true,
+            content: [{ type: "text" as const, text: `No incident found with id "${id}". Call incident_find first.` }],
+          };
+        }
+        let text = `## Symptom\n${incident.symptom}\n\n## Investigation\n${incident.investigation}\n\n## Root cause\n${incident.rootCause}\n\n## Fix\n${incident.fix}`;
+        if (!incident.verified) {
+          text = `⚠️ This incident was auto-captured and has not been reviewed by a human. Verify before trusting it fully.\n\n${text}`;
+        }
+        recordActual("incident_load", text);
+        return { content: [{ type: "text" as const, text }] };
+      },
+    );
+  }
 
   let upstreams: UpstreamManager | undefined;
   if (opts.upstreams) {
