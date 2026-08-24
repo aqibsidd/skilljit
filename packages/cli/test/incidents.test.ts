@@ -158,3 +158,128 @@ describe("synthesizeIncident", () => {
     await expect(synthesizeIncident("t", "d", fakeSynthesize)).rejects.toThrow(/synthes/i);
   });
 });
+
+describe("runCaptureIncident", () => {
+  let stateDir: string | undefined;
+  let localClonePath: string;
+  afterEach(() => {
+    if (stateDir) fs.rmSync(stateDir, { recursive: true, force: true });
+    stateDir = undefined;
+  });
+
+  function makePayload(overrides: Partial<any> = {}) {
+    return {
+      session_id: "s1",
+      transcript_path: "/tmp/does-not-need-to-exist-for-non-matching-tests.jsonl",
+      cwd: "/repo",
+      tool_name: "Bash",
+      tool_input: { command: `git commit -m "fix: checkout timeout"` },
+      ...overrides,
+    };
+  }
+
+  it("skips non-Bash tool calls", async () => {
+    const { runCaptureIncident } = await import("../src/commands/incidents.js");
+    const result = await runCaptureIncident(makePayload({ tool_name: "Write" }), { stateDir: "/unused" });
+    expect(result.captured).toBe(false);
+    expect(result.reason).toMatch(/not a bash/i);
+  });
+
+  it("skips commands that aren't fix-like git commits", async () => {
+    const { runCaptureIncident } = await import("../src/commands/incidents.js");
+    const result = await runCaptureIncident(
+      makePayload({ tool_input: { command: "npm test" } }),
+      { stateDir: "/unused" },
+    );
+    expect(result.captured).toBe(false);
+    expect(result.reason).toMatch(/fix/i);
+  });
+
+  it("skips when incidents aren't configured", async () => {
+    stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "skilljit-capture-"));
+    const { runCaptureIncident } = await import("../src/commands/incidents.js");
+    const result = await runCaptureIncident(makePayload(), { stateDir });
+    expect(result.captured).toBe(false);
+    expect(result.reason).toMatch(/not configured/i);
+  });
+
+  it("captures, redacts, writes, commits, and pushes on a matching fix commit", async () => {
+    const { execFileSync } = await import("node:child_process");
+    stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "skilljit-capture-"));
+
+    // A bare remote to push to, and a persistent local clone (as
+    // cmdIncidentsInit would create) pointed at it.
+    const remote = fs.mkdtempSync(path.join(os.tmpdir(), "skilljit-capture-remote-"));
+    execFileSync("git", ["init", "-q", "--bare", "-b", "main", remote]);
+    localClonePath = path.join(stateDir, "incidents-write");
+    execFileSync("git", ["clone", "-q", remote, localClonePath]);
+    execFileSync("sh", ["-c", `cd '${localClonePath}' && git -c user.email=t@t.com -c user.name=t commit --allow-empty -q -m init`]);
+    execFileSync("git", ["push", "-q"], { cwd: localClonePath });
+
+    const { writeIncidentsConfig, runCaptureIncident } = await import("../src/commands/incidents.js");
+    writeIncidentsConfig(stateDir, { repoUrl: remote, localClonePath });
+
+    // A source repo standing in for the codebase the fix was committed to.
+    const codeRepo = fs.mkdtempSync(path.join(os.tmpdir(), "skilljit-capture-code-"));
+    execFileSync("git", ["init", "-q", "-b", "main"], { cwd: codeRepo });
+    fs.writeFileSync(path.join(codeRepo, "app.ts"), "// fixed\n");
+    execFileSync("git", ["add", "-A"], { cwd: codeRepo });
+    execFileSync(
+      "git",
+      ["-c", "user.email=t@t.com", "-c", "user.name=t", "commit", "-q", "-m", "fix: checkout timeout"],
+      { cwd: codeRepo },
+    );
+
+    const transcriptPath = path.join(stateDir, "transcript.jsonl");
+    fs.writeFileSync(transcriptPath, JSON.stringify({ role: "user", content: "checkout was timing out" }));
+
+    const fakeSynthesize = async () =>
+      JSON.stringify({
+        symptom: "Checkout timed out under load.",
+        investigation: "Ruled out the payment provider.",
+        rootCause: "A migration held a lock on a hot table.",
+        fix: "Reran with CREATE INDEX CONCURRENTLY.",
+      });
+
+    const result = await runCaptureIncident(makePayload({ cwd: codeRepo, transcript_path: transcriptPath }), {
+      stateDir,
+      synthesizeImpl: fakeSynthesize,
+    });
+
+    expect(result.captured).toBe(true);
+    const files = fs.readdirSync(path.join(localClonePath, "incidents"));
+    expect(files).toHaveLength(1);
+    const content = fs.readFileSync(path.join(localClonePath, "incidents", files[0]), "utf8");
+    expect(content).toContain("Checkout timed out under load");
+
+    fs.rmSync(remote, { recursive: true, force: true });
+    fs.rmSync(codeRepo, { recursive: true, force: true });
+  });
+
+  it("fails closed and writes nothing when the synthesized response has the wrong shape", async () => {
+    stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "skilljit-capture-"));
+    localClonePath = path.join(stateDir, "incidents-write");
+    fs.mkdirSync(localClonePath, { recursive: true });
+    const { writeIncidentsConfig, runCaptureIncident } = await import("../src/commands/incidents.js");
+    writeIncidentsConfig(stateDir, { repoUrl: "unused", localClonePath });
+
+    const transcriptPath = path.join(stateDir, "transcript.jsonl");
+    fs.writeFileSync(transcriptPath, "x");
+
+    // This exercises the synthesizeIncident shape-check fail-closed path
+    // (Task 9), not redactSecrets's own fail-closed path — redactSecrets
+    // catches internally and can't be made to throw through a realistic
+    // string input, so its fail-closed behavior is unit-tested directly
+    // in Task 2's redact.test.ts instead. Both are real fail-closed exits
+    // from the same pipeline; this test covers the reachable one.
+    const fakeSynthesize = async () => JSON.stringify({ symptom: 1, investigation: 2, rootCause: 3, fix: 4 });
+
+    const result = await runCaptureIncident(makePayload({ transcript_path: transcriptPath, cwd: stateDir }), {
+      stateDir,
+      synthesizeImpl: fakeSynthesize,
+    });
+
+    expect(result.captured).toBe(false);
+    expect(fs.existsSync(path.join(localClonePath, "incidents"))).toBe(false);
+  });
+});

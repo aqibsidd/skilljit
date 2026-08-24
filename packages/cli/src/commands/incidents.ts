@@ -3,6 +3,7 @@ import path from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import type { ExecFileFn } from "@skilljit/core";
+import { redactSecrets, serializeIncidentMd } from "@skilljit/core";
 
 const execFileAsync = promisify(execFile);
 
@@ -164,4 +165,110 @@ export async function synthesizeIncident(
     throw new Error(`synthesizeIncident: response was missing required fields: ${raw.slice(0, 200)}`);
   }
   return parsed as SynthesizedIncident;
+}
+
+export interface HookPayload {
+  session_id: string;
+  transcript_path: string;
+  cwd: string;
+  tool_name: string;
+  tool_input: { command?: string };
+}
+
+export interface CaptureIncidentOptions {
+  stateDir: string;
+  execFileImpl?: ExecFileFn;
+  readFileImpl?: (filePath: string) => string;
+  synthesizeImpl?: (prompt: string) => Promise<string>;
+}
+
+/**
+ * The full capture pipeline, invoked by the installed PostToolUse hook.
+ * Every early-exit path returns {captured: false, reason} rather than
+ * throwing — a hook failing loudly would be disruptive mid-session for
+ * something that's supposed to be invisible on the common case (an
+ * ordinary commit that isn't a fix).
+ */
+export async function runCaptureIncident(
+  payload: HookPayload,
+  opts: CaptureIncidentOptions,
+): Promise<{ captured: boolean; reason: string }> {
+  if (payload.tool_name !== "Bash") {
+    return { captured: false, reason: "not a Bash tool call" };
+  }
+  const command = payload.tool_input.command ?? "";
+  if (!looksLikeFixCommit(command)) {
+    return { captured: false, reason: "commit does not look like a fix" };
+  }
+
+  const config = readIncidentsConfig(opts.stateDir);
+  if (!config) {
+    return { captured: false, reason: "incidents not configured (run: skilljit incidents init <repo-url>)" };
+  }
+
+  const run: ExecFileFn = opts.execFileImpl ?? ((cmd, args) => execFileAsync(cmd, args));
+  const readFile = opts.readFileImpl ?? ((p: string) => fs.readFileSync(p, "utf8"));
+
+  // Everything below can fail in ways outside our control (a missing
+  // transcript file, a git command failing, a malformed synthesis
+  // response) — all of it is wrapped in one try/catch so any such
+  // failure fails closed (returns {captured: false}) rather than
+  // throwing out of a PostToolUse hook mid-session. The only "success"
+  // path writes anything to disk, and only after allClean is confirmed.
+  try {
+    const { stdout: shaOut } = await run("git", ["-C", payload.cwd, "rev-parse", "HEAD"]);
+    const commitSha = shaOut.trim();
+    const { stdout: diff } = await run("git", ["-C", payload.cwd, "show", commitSha]);
+    const transcript = readFile(payload.transcript_path);
+
+    const synthesized = await synthesizeIncident(transcript, diff, opts.synthesizeImpl);
+
+    const redactedFields = {
+      symptom: redactSecrets(synthesized.symptom),
+      investigation: redactSecrets(synthesized.investigation),
+      rootCause: redactSecrets(synthesized.rootCause),
+      fix: redactSecrets(synthesized.fix),
+    };
+    const allClean = Object.values(redactedFields).every((r) => r.clean);
+    if (!allClean) {
+      return { captured: false, reason: "redaction failed, needs manual review" };
+    }
+
+    const capturedAt = new Date().toISOString();
+    const record = {
+      symptom: redactedFields.symptom.text,
+      investigation: redactedFields.investigation.text,
+      rootCause: redactedFields.rootCause.text,
+      fix: redactedFields.fix.text,
+      commitSha,
+      repo: `git:${config.repoUrl}`,
+      capturedAt,
+      verified: false,
+    };
+
+    await run("git", ["-C", config.localClonePath, "pull", "--quiet"]);
+    const incidentsDir = path.join(config.localClonePath, "incidents");
+    fs.mkdirSync(incidentsDir, { recursive: true });
+    const filename = `${capturedAt.slice(0, 10)}-${commitSha.slice(0, 7)}.md`;
+    fs.writeFileSync(path.join(incidentsDir, filename), serializeIncidentMd(record));
+
+    await run("git", ["-C", config.localClonePath, "add", `incidents/${filename}`]);
+    await run("git", [
+      "-C",
+      config.localClonePath,
+      "-c",
+      "user.email=skilljit@localhost",
+      "-c",
+      "user.name=skilljit",
+      "commit",
+      "-q",
+      "-m",
+      `incident: ${record.symptom.slice(0, 60)}`,
+    ]);
+    await run("git", ["-C", config.localClonePath, "push", "--quiet"]);
+
+    return { captured: true, reason: "incident captured and pushed" };
+  } catch (err) {
+    return { captured: false, reason: `incident capture failed: ${(err as Error).message}` };
+  }
 }
