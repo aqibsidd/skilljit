@@ -11,7 +11,7 @@ import { latestAdoption, resolveManagedUpstreams } from "@skilljit/proxy";
 import { runSync } from "./commands/sync.js";
 import { runSearch, formatSearchResults } from "./commands/search.js";
 import { defaultStateDir, cmdInit, cmdAdopt, cmdRestore, cmdDoctor } from "./commands/proxy.js";
-import { cmdIncidentsInit, cmdIncidentsInstallHook, runCaptureIncident } from "./commands/incidents.js";
+import { cmdIncidentsInit, cmdIncidentsInstallHook, runCaptureIncident, readIncidentsConfig } from "./commands/incidents.js";
 
 // Read the real version from this package's own package.json rather than
 // hardcoding a string here that silently drifts from every release.
@@ -102,7 +102,12 @@ program
       const record = latestAdoption(defaultStateDir(), options.config);
       if (record) upstreams = resolveManagedUpstreams(record);
     }
-    const { server } = createServer({ catalogPath: options.db, upstreams });
+    const incidentsConfig = readIncidentsConfig(defaultStateDir());
+    const { server } = createServer({
+      catalogPath: options.db,
+      upstreams,
+      incidentsCatalogPath: incidentsConfig ? options.db : undefined,
+    });
     await server.connect(new StdioServerTransport());
   });
 
