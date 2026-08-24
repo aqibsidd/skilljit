@@ -49,3 +49,32 @@ export interface ToolSearchHit {
   tool: ToolRecord;
   rank: number;
 }
+
+/** A captured debugging incident: symptom, investigation, root cause, and
+ * fix from a real prod-bug fix, so a teammate who hits the same symptom
+ * later gets the context, not just the code diff. */
+export interface IncidentRecord {
+  /** Stable unique id, e.g. "git:<repo-url>/incidents/a1b2c3d". */
+  id: string;
+  /** What was observed — the field incident_find searches against. */
+  symptom: string;
+  /** What was tried, what got ruled out. */
+  investigation: string;
+  rootCause: string;
+  /** What changed, in prose — references the commit, doesn't replace it. */
+  fix: string;
+  commitSha: string;
+  /** Where this incident came from, e.g. "git:git@example.com:team/incidents.git". */
+  repo: string;
+  filesTouched?: string[];
+  /** ISO timestamp of capture. */
+  capturedAt: string;
+  /** False until a human confirms this auto-captured record is accurate. */
+  verified: boolean;
+}
+
+/** A search hit: an incident plus its relevance rank (lower = more relevant). */
+export interface IncidentSearchHit {
+  incident: Omit<IncidentRecord, "investigation" | "fix">;
+  rank: number;
+}
