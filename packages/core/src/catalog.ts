@@ -1,7 +1,14 @@
 import Database from "better-sqlite3";
 import fs from "node:fs";
 import path from "node:path";
-import type { SkillRecord, SkillSearchHit, ToolRecord, ToolSearchHit } from "./types.js";
+import type {
+  SkillRecord,
+  SkillSearchHit,
+  ToolRecord,
+  ToolSearchHit,
+  IncidentRecord,
+  IncidentSearchHit,
+} from "./types.js";
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS skills (
@@ -43,6 +50,25 @@ CREATE VIRTUAL TABLE IF NOT EXISTS tools_fts USING fts5(
   id UNINDEXED,
   name,
   description,
+  tokenize = 'porter unicode61'
+);
+
+CREATE TABLE IF NOT EXISTS incidents (
+  id           TEXT PRIMARY KEY,
+  symptom      TEXT NOT NULL,
+  investigation TEXT NOT NULL,
+  root_cause   TEXT NOT NULL,
+  fix          TEXT NOT NULL,
+  commit_sha   TEXT NOT NULL,
+  repo         TEXT NOT NULL,
+  files_touched TEXT,
+  captured_at  TEXT NOT NULL,
+  verified     INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE VIRTUAL TABLE IF NOT EXISTS incidents_fts USING fts5(
+  id UNINDEXED,
+  symptom,
   tokenize = 'porter unicode61'
 );
 `;
@@ -266,6 +292,88 @@ export class Catalog {
     return row.c;
   }
 
+  // ---- Incidents -----------------------------------------------------
+
+  upsertIncidents(incidents: IncidentRecord[]): void {
+    const upsert = this.db.prepare(`
+      INSERT INTO incidents (id, symptom, investigation, root_cause, fix, commit_sha, repo, files_touched, captured_at, verified)
+      VALUES (@id, @symptom, @investigation, @rootCause, @fix, @commitSha, @repo, @filesTouched, @capturedAt, @verified)
+      ON CONFLICT(id) DO UPDATE SET
+        symptom = excluded.symptom,
+        investigation = excluded.investigation,
+        root_cause = excluded.root_cause,
+        fix = excluded.fix,
+        commit_sha = excluded.commit_sha,
+        repo = excluded.repo,
+        files_touched = excluded.files_touched,
+        captured_at = excluded.captured_at,
+        verified = excluded.verified
+    `);
+    const deleteFts = this.db.prepare(`DELETE FROM incidents_fts WHERE id = ?`);
+    const insertFts = this.db.prepare(`INSERT INTO incidents_fts (id, symptom) VALUES (?, ?)`);
+
+    const tx = this.db.transaction((rows: IncidentRecord[]) => {
+      for (const inc of rows) {
+        upsert.run({
+          id: inc.id,
+          symptom: inc.symptom,
+          investigation: inc.investigation,
+          rootCause: inc.rootCause,
+          fix: inc.fix,
+          commitSha: inc.commitSha,
+          repo: inc.repo,
+          filesTouched: inc.filesTouched && inc.filesTouched.length > 0 ? JSON.stringify(inc.filesTouched) : null,
+          capturedAt: inc.capturedAt,
+          verified: inc.verified ? 1 : 0,
+        });
+        deleteFts.run(inc.id);
+        insertFts.run(inc.id, inc.symptom);
+      }
+    });
+    tx(incidents);
+  }
+
+  getIncident(id: string): IncidentRecord | undefined {
+    const row = this.db.prepare(`SELECT * FROM incidents WHERE id = ?`).get(id) as any;
+    if (!row) return undefined;
+    return rowToIncident(row);
+  }
+
+  searchIncidents(query: string, limit = 8): IncidentSearchHit[] {
+    const ftsQuery = toFtsQuery(query);
+    if (!ftsQuery) return [];
+    const rows = this.db
+      .prepare(
+        `
+        SELECT i.id, i.symptom, i.root_cause, i.commit_sha, i.repo, i.captured_at, i.verified,
+               bm25(incidents_fts) AS rank
+        FROM incidents_fts
+        JOIN incidents i ON i.id = incidents_fts.id
+        WHERE incidents_fts MATCH ?
+        ORDER BY rank
+        LIMIT ?
+      `,
+      )
+      .all(ftsQuery, limit) as any[];
+    return rows.map((row) => ({
+      incident: {
+        id: row.id,
+        symptom: row.symptom,
+        rootCause: row.root_cause,
+        commitSha: row.commit_sha,
+        repo: row.repo,
+        capturedAt: row.captured_at,
+        verified: !!row.verified,
+      } as Omit<IncidentRecord, "investigation" | "fix">,
+      rank: row.rank,
+    }));
+  }
+
+  incidentCount(): number {
+    const row = this.db.prepare(`SELECT COUNT(*) AS c FROM incidents`).get() as { c: number };
+    return row.c;
+  }
+
   // ---- Cross-session token ledger ----------------------------------------
   // Every skilljit session/tab shares this catalog.db, so these totals
   // accumulate across all of them — the fix for "N tabs open means N tabs
@@ -312,5 +420,20 @@ function rowToSkill(row: any): SkillRecord {
     installCount: row.install_count ?? undefined,
     auditStatus: row.audit_status ?? "unaudited",
     updatedAt: row.updated_at,
+  };
+}
+
+function rowToIncident(row: any): IncidentRecord {
+  return {
+    id: row.id,
+    symptom: row.symptom,
+    investigation: row.investigation,
+    rootCause: row.root_cause,
+    fix: row.fix,
+    commitSha: row.commit_sha,
+    repo: row.repo,
+    filesTouched: row.files_touched ? JSON.parse(row.files_touched) : undefined,
+    capturedAt: row.captured_at,
+    verified: !!row.verified,
   };
 }

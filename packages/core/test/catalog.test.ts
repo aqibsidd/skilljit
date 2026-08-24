@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import Database from "better-sqlite3";
 import { Catalog } from "../src/catalog.js";
-import type { SkillRecord } from "../src/types.js";
+import type { SkillRecord, IncidentRecord } from "../src/types.js";
 
 function makeSkill(overrides: Partial<SkillRecord> = {}): SkillRecord {
   return {
@@ -186,5 +186,58 @@ describe("Catalog", () => {
     expect(secondTab.getGlobalLedgerTotals()).toEqual({ baselineTokens: 400, actualTokens: 40, sessionCount: 2 });
     secondTab.close();
     catalog = new Catalog(dbPath); // afterEach expects `catalog` to still be open+closeable
+  });
+
+  function makeIncident(overrides: Partial<IncidentRecord> = {}): IncidentRecord {
+    return {
+      id: "git:acme/webapp/incidents/a1b2c3d",
+      symptom: "Checkout requests time out under load after a deploy.",
+      investigation: "Ruled out the payment provider. Traced it to a migration holding a lock.",
+      rootCause: "The migration ran ACCESS EXCLUSIVE against a hot table.",
+      fix: "Reran the migration with CREATE INDEX CONCURRENTLY.",
+      commitSha: "a1b2c3d4e5f6",
+      repo: "git:git@example.com:acme/webapp.git",
+      capturedAt: "2026-08-24T12:00:00.000Z",
+      verified: false,
+      ...overrides,
+    };
+  }
+
+  it("upserts and retrieves an incident by id", () => {
+    catalog.upsertIncidents([makeIncident()]);
+    const found = catalog.getIncident("git:acme/webapp/incidents/a1b2c3d");
+    expect(found?.symptom).toContain("Checkout requests time out");
+    expect(found?.fix).toContain("CREATE INDEX CONCURRENTLY");
+  });
+
+  it("incident upsert is idempotent — re-inserting updates, not duplicates", () => {
+    catalog.upsertIncidents([makeIncident()]);
+    catalog.upsertIncidents([makeIncident({ verified: true })]);
+    expect(catalog.incidentCount()).toBe(1);
+    expect(catalog.getIncident("git:acme/webapp/incidents/a1b2c3d")?.verified).toBe(true);
+  });
+
+  it("finds an incident by keyword match in the symptom", () => {
+    catalog.upsertIncidents([
+      makeIncident(),
+      makeIncident({ id: "git:acme/webapp/incidents/z9y8x7w", symptom: "Login page returns 500 after cache flush." }),
+    ]);
+    const hits = catalog.searchIncidents("checkout timeout", 8);
+    expect(hits.length).toBeGreaterThan(0);
+    expect(hits[0].incident.id).toBe("git:acme/webapp/incidents/a1b2c3d");
+  });
+
+  it("incident search hits omit investigation and fix (cheap candidates only)", () => {
+    catalog.upsertIncidents([makeIncident()]);
+    const hits = catalog.searchIncidents("checkout", 8);
+    expect((hits[0].incident as any).investigation).toBeUndefined();
+    expect((hits[0].incident as any).fix).toBeUndefined();
+  });
+
+  it("counts incidents independently of skills", () => {
+    catalog.upsertSkills([makeSkill()]);
+    catalog.upsertIncidents([makeIncident()]);
+    expect(catalog.count()).toBe(1);
+    expect(catalog.incidentCount()).toBe(1);
   });
 });
