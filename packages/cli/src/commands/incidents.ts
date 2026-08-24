@@ -55,3 +55,47 @@ export async function cmdIncidentsInit(opts: IncidentsInitOptions, log: (s: stri
   log(`Incidents repo configured: ${opts.repoUrl}`);
   log(`Run \`skilljit incidents install-hook\` next to capture incidents automatically.`);
 }
+
+const CAPTURE_HOOK_ENTRY = {
+  matcher: "Bash",
+  hooks: [{ type: "command", command: "skilljit capture-incident" }],
+};
+
+export interface IncidentsInstallHookOptions {
+  settingsPath: string;
+  yes?: boolean;
+}
+
+/**
+ * Proposes (or, with --yes, writes) the PostToolUse hook entry that
+ * triggers incident capture on fix-like git commits. Mirrors cmdAdopt's
+ * dry-run-first posture — never edits a settings file the user relies on
+ * without explicit confirmation.
+ */
+export async function cmdIncidentsInstallHook(opts: IncidentsInstallHookOptions, log: (s: string) => void): Promise<void> {
+  const settings = fs.existsSync(opts.settingsPath)
+    ? (JSON.parse(fs.readFileSync(opts.settingsPath, "utf8")) as Record<string, any>)
+    : {};
+
+  settings.hooks ??= {};
+  settings.hooks.PostToolUse ??= [];
+  const alreadyInstalled = settings.hooks.PostToolUse.some(
+    (entry: any) => entry.matcher === "Bash" && entry.hooks?.some((h: any) => h.command === "skilljit capture-incident"),
+  );
+
+  if (alreadyInstalled) {
+    log(`Hook already installed in ${opts.settingsPath}.`);
+    return;
+  }
+
+  if (!opts.yes) {
+    log(`This will add a PostToolUse hook to ${opts.settingsPath}:`);
+    log(JSON.stringify(CAPTURE_HOOK_ENTRY, null, 2));
+    log(`Re-run with --yes to write it.`);
+    return;
+  }
+
+  settings.hooks.PostToolUse.push(CAPTURE_HOOK_ENTRY);
+  fs.writeFileSync(opts.settingsPath, JSON.stringify(settings, null, 2));
+  log(`Hook installed in ${opts.settingsPath}.`);
+}

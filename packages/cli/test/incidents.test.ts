@@ -2,7 +2,7 @@ import { describe, it, expect, afterEach } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { readIncidentsConfig, writeIncidentsConfig, cmdIncidentsInit } from "../src/commands/incidents.js";
+import { readIncidentsConfig, writeIncidentsConfig, cmdIncidentsInit, cmdIncidentsInstallHook } from "../src/commands/incidents.js";
 
 describe("incidents config", () => {
   let stateDir: string;
@@ -49,5 +49,64 @@ describe("cmdIncidentsInit", () => {
     expect(config?.repoUrl).toBe(srcRepo);
     expect(fs.existsSync(path.join(config!.localClonePath, "README.md"))).toBe(true);
     expect(logs.length).toBeGreaterThan(0);
+  });
+});
+
+describe("cmdIncidentsInstallHook", () => {
+  let dir: string;
+  afterEach(() => fs.rmSync(dir, { recursive: true, force: true }));
+
+  it("is a dry run by default — prints the change but doesn't write it", async () => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), "skilljit-hook-"));
+    const settingsPath = path.join(dir, "settings.json");
+    fs.writeFileSync(settingsPath, JSON.stringify({ theme: "dark" }, null, 2));
+
+    const logs: string[] = [];
+    await cmdIncidentsInstallHook({ settingsPath }, (l) => logs.push(l));
+
+    const settings = JSON.parse(fs.readFileSync(settingsPath, "utf8"));
+    expect(settings.hooks).toBeUndefined();
+    expect(logs.join("\n")).toContain("--yes");
+  });
+
+  it("writes the hook entry when --yes is passed, preserving existing settings", async () => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), "skilljit-hook-"));
+    const settingsPath = path.join(dir, "settings.json");
+    fs.writeFileSync(settingsPath, JSON.stringify({ theme: "dark" }, null, 2));
+
+    await cmdIncidentsInstallHook({ settingsPath, yes: true }, () => {});
+
+    const settings = JSON.parse(fs.readFileSync(settingsPath, "utf8"));
+    expect(settings.theme).toBe("dark");
+    expect(settings.hooks.PostToolUse).toEqual([
+      { matcher: "Bash", hooks: [{ type: "command", command: "skilljit capture-incident" }] },
+    ]);
+  });
+
+  it("appends to an existing PostToolUse hook list instead of overwriting it", async () => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), "skilljit-hook-"));
+    const settingsPath = path.join(dir, "settings.json");
+    fs.writeFileSync(
+      settingsPath,
+      JSON.stringify({ hooks: { PostToolUse: [{ matcher: "Write", hooks: [{ type: "command", command: "echo hi" }] }] } }, null, 2),
+    );
+
+    await cmdIncidentsInstallHook({ settingsPath, yes: true }, () => {});
+
+    const settings = JSON.parse(fs.readFileSync(settingsPath, "utf8"));
+    expect(settings.hooks.PostToolUse).toHaveLength(2);
+    expect(settings.hooks.PostToolUse[1].matcher).toBe("Bash");
+  });
+
+  it("is idempotent — running it twice doesn't duplicate the hook entry", async () => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), "skilljit-hook-"));
+    const settingsPath = path.join(dir, "settings.json");
+    fs.writeFileSync(settingsPath, JSON.stringify({}, null, 2));
+
+    await cmdIncidentsInstallHook({ settingsPath, yes: true }, () => {});
+    await cmdIncidentsInstallHook({ settingsPath, yes: true }, () => {});
+
+    const settings = JSON.parse(fs.readFileSync(settingsPath, "utf8"));
+    expect(settings.hooks.PostToolUse).toHaveLength(1);
   });
 });
