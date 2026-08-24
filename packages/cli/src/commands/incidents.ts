@@ -201,21 +201,25 @@ export async function runCaptureIncident(
     return { captured: false, reason: "commit does not look like a fix" };
   }
 
-  const config = readIncidentsConfig(opts.stateDir);
-  if (!config) {
-    return { captured: false, reason: "incidents not configured (run: skilljit incidents init <repo-url>)" };
-  }
-
   const run: ExecFileFn = opts.execFileImpl ?? ((cmd, args) => execFileAsync(cmd, args));
   const readFile = opts.readFileImpl ?? ((p: string) => fs.readFileSync(p, "utf8"));
 
-  // Everything below can fail in ways outside our control (a missing
-  // transcript file, a git command failing, a malformed synthesis
-  // response) — all of it is wrapped in one try/catch so any such
-  // failure fails closed (returns {captured: false}) rather than
-  // throwing out of a PostToolUse hook mid-session. The only "success"
-  // path writes anything to disk, and only after allClean is confirmed.
+  // Everything below can fail in ways outside our control (a corrupted
+  // config file, a missing transcript file, a git command failing, a
+  // malformed synthesis response) — all of it is wrapped in one
+  // try/catch so any such failure fails closed (returns
+  // {captured: false}) rather than throwing out of a PostToolUse hook
+  // mid-session. The only "success" path writes anything to disk, and
+  // only after allClean is confirmed. readIncidentsConfig is included
+  // here (not read before the try) because its JSON.parse can throw on
+  // a malformed incidents.json — fs.existsSync only proves the file is
+  // there, not that its contents parse.
   try {
+    const config = readIncidentsConfig(opts.stateDir);
+    if (!config) {
+      return { captured: false, reason: "incidents not configured (run: skilljit incidents init <repo-url>)" };
+    }
+
     const { stdout: shaOut } = await run("git", ["-C", payload.cwd, "rev-parse", "HEAD"]);
     const commitSha = shaOut.trim();
     const { stdout: diff } = await run("git", ["-C", payload.cwd, "show", commitSha]);
@@ -269,6 +273,18 @@ export async function runCaptureIncident(
 
     return { captured: true, reason: "incident captured and pushed" };
   } catch (err) {
-    return { captured: false, reason: `incident capture failed: ${(err as Error).message}` };
+    // The error message can itself carry unredacted content — e.g.
+    // synthesizeIncident's shape-check error embeds up to 200 raw
+    // characters of the model's response, which hasn't been through
+    // redactSecrets yet at that point in the pipeline (that failure
+    // happens *before* redaction runs). Run the reason through the same
+    // redaction pass before it's ever returned or logged, rather than
+    // exposing the raw message.
+    const rawReason = `incident capture failed: ${(err as Error).message}`;
+    const redactedReason = redactSecrets(rawReason);
+    return {
+      captured: false,
+      reason: redactedReason.clean ? redactedReason.text : "incident capture failed (details withheld, needs manual review)",
+    };
   }
 }

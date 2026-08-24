@@ -299,4 +299,60 @@ describe("runCaptureIncident", () => {
     expect(result.captured).toBe(false);
     expect(fs.existsSync(path.join(localClonePath, "incidents"))).toBe(false);
   });
+
+  it("fails closed rather than throwing when incidents.json is malformed", async () => {
+    stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "skilljit-capture-"));
+    // Write garbage directly, bypassing writeIncidentsConfig, so
+    // fs.existsSync sees a file but JSON.parse inside readIncidentsConfig
+    // throws — this is exactly the gap the fail-closed try/catch needs to
+    // cover: existsSync only proves the file exists, not that it parses.
+    fs.writeFileSync(path.join(stateDir, "incidents.json"), "{ this is not valid json");
+
+    const { runCaptureIncident } = await import("../src/commands/incidents.js");
+    const result = await runCaptureIncident(makePayload(), { stateDir });
+
+    expect(result.captured).toBe(false);
+    expect(result.reason).toBeTruthy();
+  });
+
+  it("redacts secrets out of the failure reason itself when synthesis leaks unredacted text", async () => {
+    const { execFileSync } = await import("node:child_process");
+    stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "skilljit-capture-"));
+    localClonePath = path.join(stateDir, "incidents-write");
+    fs.mkdirSync(localClonePath, { recursive: true });
+    const { writeIncidentsConfig, runCaptureIncident } = await import("../src/commands/incidents.js");
+    writeIncidentsConfig(stateDir, { repoUrl: "unused", localClonePath });
+
+    // Real git repo as cwd, same as the other fail-closed test, so the
+    // pipeline reaches synthesizeIncident rather than failing earlier.
+    const srcRepo = path.join(stateDir, "src-repo");
+    fs.mkdirSync(srcRepo, { recursive: true });
+    execFileSync("git", ["init", "-q", "-b", "main"], { cwd: srcRepo });
+    fs.writeFileSync(path.join(srcRepo, "app.ts"), "// fixed\n");
+    execFileSync("git", ["add", "-A"], { cwd: srcRepo });
+    execFileSync(
+      "git",
+      ["-c", "user.email=t@t.com", "-c", "user.name=t", "commit", "-q", "-m", "fix: checkout timeout"],
+      { cwd: srcRepo },
+    );
+
+    const transcriptPath = path.join(stateDir, "transcript.jsonl");
+    fs.writeFileSync(transcriptPath, "x");
+
+    // Not valid JSON, so synthesizeIncident's catch throws an error whose
+    // message embeds up to 200 raw characters of this response — content
+    // that hasn't been through redactSecrets yet, since that failure
+    // happens before the redaction step ever runs. The secret below
+    // matches redactSecrets's AWS-key pattern.
+    const secret = "AKIAABCDEFGHIJKLMNOP";
+    const fakeSynthesize = async () => `not json but leaks ${secret}`;
+
+    const result = await runCaptureIncident(makePayload({ transcript_path: transcriptPath, cwd: srcRepo }), {
+      stateDir,
+      synthesizeImpl: fakeSynthesize,
+    });
+
+    expect(result.captured).toBe(false);
+    expect(result.reason).not.toContain(secret);
+  });
 });
