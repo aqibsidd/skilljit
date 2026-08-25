@@ -55,6 +55,10 @@ export async function withGitWorktree<T>(
   const bareDir = path.join(cacheDir, `${cacheKeyForUrl(url)}.git`);
 
   if (!fs.existsSync(bareDir)) {
+    // --mirror, not --bare: a plain --bare clone doesn't set up a fetch
+    // refspec that updates local branch refs (and HEAD's target) on a
+    // later `git fetch` — only --mirror does, which is what makes the
+    // "clone once, fetch cheaply after" reuse actually pick up new commits.
     await run("git", ["clone", "--mirror", "--quiet", url, bareDir]);
   } else {
     await run("git", ["--git-dir", bareDir, "fetch", "--quiet", "--prune", "origin"]);
@@ -62,6 +66,8 @@ export async function withGitWorktree<T>(
 
   const checkoutRef = opts.ref ?? "HEAD";
   const worktreeDir = fs.mkdtempSync(path.join(os.tmpdir(), "skilljit-wt-"));
+  // A worktree can't be added at a path that already exists as an empty
+  // dir in some git versions; remove it and let `worktree add` create it.
   fs.rmdirSync(worktreeDir);
 
   try {
