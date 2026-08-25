@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { promisify } from "node:util";
 import type { ExecFileFn } from "@skilljit/core";
 import { redactSecrets, serializeIncidentMd } from "@skilljit/core";
@@ -123,9 +123,27 @@ export interface SynthesizedIncident {
 }
 
 function defaultSynthesizeImpl(prompt: string): Promise<string> {
-  // Reuses the execFileAsync already defined at module scope in Task 7 —
-  // no second promisify(execFile) needed.
-  return execFileAsync("claude", ["-p", prompt, "--output-format", "json"]).then((r) => r.stdout);
+  return new Promise((resolve, reject) => {
+    const child = spawn("claude", ["-p", "--output-format", "json"]);
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (chunk) => {
+      stdout += chunk;
+    });
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk;
+    });
+    child.on("error", reject);
+    child.on("close", (code) => {
+      if (code !== 0) {
+        reject(new Error(`claude -p exited with code ${code}: ${stderr.slice(0, 500)}`));
+        return;
+      }
+      resolve(stdout);
+    });
+    child.stdin.write(prompt);
+    child.stdin.end();
+  });
 }
 
 /**
@@ -179,6 +197,21 @@ function extractJsonObject(text: string): string {
   return body.slice(start, end + 1);
 }
 
+const TRANSCRIPT_WINDOW_CHARS = 100_000;
+const DIFF_CAP_CHARS = 20_000;
+
+function windowTranscript(text: string): string {
+  if (text.length <= TRANSCRIPT_WINDOW_CHARS) return text;
+  const dropped = text.length - TRANSCRIPT_WINDOW_CHARS;
+  return `...[truncated ${dropped} earlier characters]...\n` + text.slice(-TRANSCRIPT_WINDOW_CHARS);
+}
+
+function capDiff(text: string): string {
+  if (text.length <= DIFF_CAP_CHARS) return text;
+  const dropped = text.length - DIFF_CAP_CHARS;
+  return text.slice(0, DIFF_CAP_CHARS) + `\n...[truncated ${dropped} trailing characters]...`;
+}
+
 /**
  * Synthesizes the four narrative incident fields from a session
  * transcript and a commit diff. Shells out to `claude -p` by default
@@ -190,13 +223,15 @@ export async function synthesizeIncident(
   diff: string,
   synthesizeImpl: (prompt: string) => Promise<string> = defaultSynthesizeImpl,
 ): Promise<SynthesizedIncident> {
+  const windowedTranscript = windowTranscript(transcript);
+  const windowedDiff = capDiff(diff);
   const prompt =
     "You are summarizing a debugging session that just ended in a bug fix, for a teammate " +
     "who might hit the same problem later. From the transcript and diff below, respond with " +
     'ONLY a JSON object: {"symptom": "...", "investigation": "...", "rootCause": "...", "fix": "..."}. ' +
     "Paraphrase — never quote raw error output, log lines, or literal values verbatim; use " +
     "placeholders for anything that looks like a value rather than a pattern.\n\n" +
-    `TRANSCRIPT:\n${transcript}\n\nDIFF:\n${diff}`;
+    `TRANSCRIPT:\n${windowedTranscript}\n\nDIFF:\n${windowedDiff}`;
 
   const raw = await synthesizeImpl(prompt);
   const answer = unwrapClaudeEnvelope(raw);
@@ -253,7 +288,7 @@ export async function runCaptureIncident(
     return { captured: false, reason: "commit does not look like a fix" };
   }
 
-  const run: ExecFileFn = opts.execFileImpl ?? ((cmd, args) => execFileAsync(cmd, args));
+  const run: ExecFileFn = opts.execFileImpl ?? ((cmd, args) => execFileAsync(cmd, args, { maxBuffer: 50 * 1024 * 1024 }));
   const readFile = opts.readFileImpl ?? ((p: string) => fs.readFileSync(p, "utf8"));
 
   // Everything below can fail in ways outside our control (a corrupted

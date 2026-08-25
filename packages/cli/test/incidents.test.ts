@@ -347,7 +347,7 @@ describe("synthesizeIncident", () => {
     expect(seenPrompt.length).toBeLessThan(200_000);
     // The *end* of the transcript survives — that's the part describing the fix.
     expect(seenPrompt).toContain(`{"turn":59999,"text":"padding padding"}`);
-    expect(seenPrompt).toContain(`{"turn":0,`) === false;
+    expect(seenPrompt).not.toContain(`{"turn":0,`);
     expect(seenPrompt).toMatch(/truncated/i);
   });
 
