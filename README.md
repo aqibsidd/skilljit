@@ -146,7 +146,8 @@ even after the skill itself has been loaded.
 `tool_find` and `tool_call` only appear once you've configured upstream MCP servers
 via `skilljit adopt` (see below) — run skills-only and the surface is 4 tools, not 6.
 This is what makes the skills half independently shippable and testable from the
-proxy half.
+proxy half. `incident_find`/`incident_load` are two more opt-in tools on the same
+model — see "Incident memory" below.
 
 ## Multiple tabs / parallel sessions
 
@@ -184,6 +185,54 @@ Safety comes first here, since this touches configs you already rely on:
   back.
 - One upstream MCP server being unavailable doesn't affect the others: `tool_call`
   returns a clean error for that server, everything else keeps working.
+
+## Incident memory — sharing debugging context across a team
+
+When you fix a bug, the diff shows *what* changed but not *why* — the symptom you
+started from, what you ruled out, and how you found the root cause. That context
+normally dies with your terminal history. Incident memory captures it automatically
+and shares it through the same sync path skills already use, so a teammate who hits
+the same symptom later gets your investigation, not just your commit.
+
+Setup, one time per machine:
+
+```bash
+# 1. Point skilljit at a git repo to capture incidents into (and later sync from)
+skilljit incidents init git@github.com:your-org/incidents.git
+
+# 2. Install the hook that captures on fix-like commits — dry run by default
+skilljit incidents install-hook
+skilljit incidents install-hook --yes
+```
+
+From then on, whenever a Claude Code session runs a `git commit` whose message looks
+like a fix (`fix: ...`, `fixes #123`, `closes #45`, `resolves #77`, including the
+heredoc-wrapped commit format Claude Code itself uses), the hook:
+
+1. Reads that session's transcript and the commit's diff.
+2. Asks `claude -p` to synthesize a paraphrased symptom / investigation / root cause /
+   fix — never raw log lines or literal values, by instruction and then by a
+   mechanical redaction pass over the result.
+3. Fails closed on anything that doesn't check out (bad JSON shape, a redaction
+   concern, the commit not actually having landed) — nothing gets written or pushed
+   unless the whole pipeline succeeds.
+4. Commits and pushes the result to the incidents repo from step 1.
+
+Everyone who runs `skilljit sync` afterward picks up new incidents the same way they
+already pick up new skills — no separate command.
+
+Two more opt-in MCP tools appear automatically in `skilljit serve` once
+`skilljit incidents init` has been run — no extra flag needed:
+
+| Tool | Returns |
+|---|---|
+| `incident_find(symptom, limit=8)` | Cheap candidates: id, symptom, root cause, repo, capture time, verified status — without the full investigation/fix. |
+| `incident_load(id)` | The full symptom/investigation/root-cause/fix, plus the commit and repo it's about, for one incident by id. Warns loudly if the incident hasn't been human-verified yet. |
+
+Every auto-captured incident starts `verified: false` and says so loudly in
+`incident_load`'s output — the same unaudited-source posture as skills (see
+Security, below). Nothing here pushes context at anyone proactively: a teammate
+only sees an incident when they call `incident_find` themselves.
 
 ## Security
 
@@ -242,7 +291,8 @@ skilljit/
   packages/core/     catalog store, FTS5 index, ranking, token accounting
   packages/proxy/    upstream MCP server management, config adopt/restore, tool_find/tool_call routing
   packages/mcp/      the MCP stdio server (the fixed tool surface, see "The six tools" above)
-  packages/cli/      skilljit sync | search | serve | stats | init | adopt | restore | doctor
+  packages/cli/      skilljit sync | search | serve | stats | init | adopt | restore | doctor |
+                     incidents init | incidents install-hook
   python/            pip package — CLI shim + read-only query API for Agent SDK users
   bench/             labeled task→skill eval set + recall@k harness
 ```
