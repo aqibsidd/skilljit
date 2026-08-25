@@ -129,6 +129,57 @@ function defaultSynthesizeImpl(prompt: string): Promise<string> {
 }
 
 /**
+ * `claude -p --output-format json` does not print the model's answer — it
+ * prints a *result envelope* around it:
+ *
+ *   {"is_error":false,"session_id":"...","total_cost_usd":0.08,
+ *    "subtype":"success","result":"<the answer, as a string>","type":"result",...}
+ *
+ * (Shape verified against `claude` 2.1.241 rather than assumed.) The four
+ * incident fields live inside the `result` *string*, so they are never
+ * present on the envelope itself — parsing the envelope directly made every
+ * real capture fail with "missing required fields".
+ *
+ * Returns the model's answer text. A response that isn't an envelope at all
+ * is passed through unchanged, so an injected synthesizeImpl (every test on
+ * this branch) can keep returning the bare answer.
+ */
+function unwrapClaudeEnvelope(raw: string): string {
+  let envelope: unknown;
+  try {
+    envelope = JSON.parse(raw);
+  } catch {
+    return raw; // plain text — let the caller's JSON parse produce the error
+  }
+  if (!envelope || typeof envelope !== "object") return raw;
+  const obj = envelope as Record<string, unknown>;
+  if (typeof obj.result !== "string") return raw; // already the bare answer object
+  if (obj.is_error === true) {
+    // An envelope can report failure (auth, credit balance, a tool error)
+    // while still being perfectly valid JSON. Surfacing it as "not valid
+    // JSON" would send whoever reads the hook log down the wrong path.
+    const subtype = typeof obj.subtype === "string" ? obj.subtype : "unknown";
+    throw new Error(`synthesizeIncident: claude -p reported an error (${subtype}): ${obj.result.slice(0, 200)}`);
+  }
+  return obj.result;
+}
+
+/**
+ * Pulls the JSON object out of a model answer. Models routinely wrap JSON in
+ * a ```json fence or preface it with a line of prose despite being asked for
+ * "ONLY a JSON object", and a whole capture is too expensive to throw away
+ * over that.
+ */
+function extractJsonObject(text: string): string {
+  const fence = /```(?:json)?\s*([\s\S]*?)```/i.exec(text);
+  const body = fence ? fence[1] : text;
+  const start = body.indexOf("{");
+  const end = body.lastIndexOf("}");
+  if (start === -1 || end === -1 || end < start) return body.trim();
+  return body.slice(start, end + 1);
+}
+
+/**
  * Synthesizes the four narrative incident fields from a session
  * transcript and a commit diff. Shells out to `claude -p` by default
  * (Claude Code's own non-interactive mode — already installed and
@@ -148,11 +199,12 @@ export async function synthesizeIncident(
     `TRANSCRIPT:\n${transcript}\n\nDIFF:\n${diff}`;
 
   const raw = await synthesizeImpl(prompt);
+  const answer = unwrapClaudeEnvelope(raw);
   let parsed: unknown;
   try {
-    parsed = JSON.parse(raw);
+    parsed = JSON.parse(extractJsonObject(answer));
   } catch {
-    throw new Error(`synthesizeIncident: response was not valid JSON: ${raw.slice(0, 200)}`);
+    throw new Error(`synthesizeIncident: response was not valid JSON: ${answer.slice(0, 200)}`);
   }
   if (
     !parsed ||
@@ -162,7 +214,7 @@ export async function synthesizeIncident(
     typeof (parsed as any).rootCause !== "string" ||
     typeof (parsed as any).fix !== "string"
   ) {
-    throw new Error(`synthesizeIncident: response was missing required fields: ${raw.slice(0, 200)}`);
+    throw new Error(`synthesizeIncident: response was missing required fields: ${answer.slice(0, 200)}`);
   }
   return parsed as SynthesizedIncident;
 }

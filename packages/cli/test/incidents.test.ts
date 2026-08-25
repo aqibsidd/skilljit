@@ -50,6 +50,53 @@ describe("cmdIncidentsInit", () => {
     expect(fs.existsSync(path.join(config!.localClonePath, "README.md"))).toBe(true);
     expect(logs.length).toBeGreaterThan(0);
   });
+
+  it("gives a brand-new empty incidents repo a first commit so captures have somewhere to push", async () => {
+    stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "skilljit-incidents-cfg-"));
+    srcRepo = fs.mkdtempSync(path.join(os.tmpdir(), "skilljit-incidents-empty-"));
+    const { execFileSync } = await import("node:child_process");
+    // A bare repo with no commits at all — what `gh repo create` (no
+    // README) hands you. A plain clone of this has no HEAD and no
+    // upstream tracking branch, so the first capture's pull/push both
+    // fail unless init establishes one.
+    execFileSync("git", ["init", "-q", "--bare", "-b", "main", srcRepo]);
+
+    await cmdIncidentsInit({ repoUrl: srcRepo, stateDir }, () => {});
+
+    const config = readIncidentsConfig(stateDir)!;
+    // The clone has a commit ...
+    const localSha = execFileSync("git", ["-C", config.localClonePath, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
+    expect(localSha).toMatch(/^[0-9a-f]{40}$/);
+    // ... it was pushed to the remote ...
+    const remoteSha = execFileSync("git", ["-C", srcRepo, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
+    expect(remoteSha).toBe(localSha);
+    // ... and the local branch tracks the remote one, so `git pull` and
+    // `git push` with no arguments both work from here on.
+    const upstream = execFileSync(
+      "git",
+      ["-C", config.localClonePath, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"],
+      { encoding: "utf8" },
+    ).trim();
+    expect(upstream).toMatch(/^origin\//);
+  });
+
+  it("refuses to re-point an existing clone at a different repo URL", async () => {
+    stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "skilljit-incidents-cfg-"));
+    srcRepo = fs.mkdtempSync(path.join(os.tmpdir(), "skilljit-incidents-init-src-"));
+    const { execFileSync } = await import("node:child_process");
+    execFileSync("git", ["init", "-q", "--bare", "-b", "main", srcRepo]);
+    await cmdIncidentsInit({ repoUrl: srcRepo, stateDir }, () => {});
+
+    // Re-running against a *different* URL used to pull the old remote and
+    // then write the new URL into incidents.json — capture would push to
+    // the old repo while sync read the new one, with no error anywhere.
+    await expect(
+      cmdIncidentsInit({ repoUrl: "git@example.com:other/incidents.git", stateDir }, () => {}),
+    ).rejects.toThrow(/already/i);
+
+    // The recorded config still points at the original repo, not the new one.
+    expect(readIncidentsConfig(stateDir)?.repoUrl).toBe(srcRepo);
+  });
 });
 
 describe("cmdIncidentsInstallHook", () => {
@@ -79,8 +126,21 @@ describe("cmdIncidentsInstallHook", () => {
     const settings = JSON.parse(fs.readFileSync(settingsPath, "utf8"));
     expect(settings.theme).toBe("dark");
     expect(settings.hooks.PostToolUse).toEqual([
-      { matcher: "Bash", hooks: [{ type: "command", command: "skilljit capture-incident" }] },
+      { matcher: "Bash", hooks: [{ type: "command", command: "skilljit capture-incident", timeout: 600 }] },
     ]);
+  });
+
+  it("sets an explicit generous timeout — the hook does an inline claude -p call", async () => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), "skilljit-hook-"));
+    const settingsPath = path.join(dir, "settings.json");
+    fs.writeFileSync(settingsPath, JSON.stringify({}, null, 2));
+
+    await cmdIncidentsInstallHook({ settingsPath, yes: true }, () => {});
+
+    const settings = JSON.parse(fs.readFileSync(settingsPath, "utf8"));
+    // Claude Code's default hook timeout is 60s; a real synthesis call
+    // routinely exceeds that and would stall the session on every fix commit.
+    expect(settings.hooks.PostToolUse[0].hooks[0].timeout).toBeGreaterThanOrEqual(300);
   });
 
   it("appends to an existing PostToolUse hook list instead of overwriting it", async () => {
@@ -134,6 +194,61 @@ describe("looksLikeFixCommit", () => {
     const { looksLikeFixCommit } = await import("../src/commands/incidents.js");
     expect(looksLikeFixCommit(`git commit`)).toBe(false);
   });
+
+  it("matches `resolves #`", async () => {
+    const { looksLikeFixCommit } = await import("../src/commands/incidents.js");
+    expect(looksLikeFixCommit(`git commit -m "resolves #77 by retrying the fetch"`)).toBe(true);
+  });
+
+  it("matches Claude Code's own heredoc commit shape", async () => {
+    const { looksLikeFixCommit } = await import("../src/commands/incidents.js");
+    // This is the exact form Claude Code uses for every commit it makes.
+    // The extracted -m argument is `$(cat <<'EOF' ... )`, so an anchored,
+    // non-multiline ^fix: never matched it — meaning the hook essentially
+    // never fired for the tool it ships with.
+    const command = `git commit -m "$(cat <<'EOF'
+fix: retry the flaky upload on 502
+
+Co-Authored-By: Claude <noreply@anthropic.com>
+EOF
+)"`;
+    expect(looksLikeFixCommit(command)).toBe(true);
+  });
+
+  it("does not match a non-fix heredoc commit", async () => {
+    const { looksLikeFixCommit } = await import("../src/commands/incidents.js");
+    const command = `git commit -m "$(cat <<'EOF'
+feat: add a dashboard widget
+
+Co-Authored-By: Claude <noreply@anthropic.com>
+EOF
+)"`;
+    expect(looksLikeFixCommit(command)).toBe(false);
+  });
+
+  it("matches combined short flags like -am", async () => {
+    const { looksLikeFixCommit } = await import("../src/commands/incidents.js");
+    expect(looksLikeFixCommit(`git commit -am "fix: drop the stale cache entry"`)).toBe(true);
+  });
+});
+
+describe("extractCommitMessage", () => {
+  it("unwraps a heredoc-wrapped message down to the real commit text", async () => {
+    const { extractCommitMessage } = await import("../src/commands/incidents.js");
+    const command = `git commit -m "$(cat <<'EOF'
+fix: retry the flaky upload on 502
+
+Body line.
+EOF
+)"`;
+    expect(extractCommitMessage(command)).toBe("fix: retry the flaky upload on 502\n\nBody line.");
+  });
+
+  it("returns a plain inline message unchanged, and undefined for a non-commit", async () => {
+    const { extractCommitMessage } = await import("../src/commands/incidents.js");
+    expect(extractCommitMessage(`git commit -m "fix: a thing"`)).toBe("fix: a thing");
+    expect(extractCommitMessage(`npm test`)).toBeUndefined();
+  });
 });
 
 describe("synthesizeIncident", () => {
@@ -156,6 +271,96 @@ describe("synthesizeIncident", () => {
     const { synthesizeIncident } = await import("../src/commands/incidents.js");
     const fakeSynthesize = async () => "not json";
     await expect(synthesizeIncident("t", "d", fakeSynthesize)).rejects.toThrow(/synthes/i);
+  });
+
+  // `claude -p --output-format json` does NOT return the model's answer
+  // directly — it returns a *result envelope* whose `result` field holds the
+  // answer as a string. Every test on this branch injected a fake
+  // synthesizeImpl returning the bare answer, so the real production shape
+  // was never exercised and every real call failed with "missing required
+  // fields". The fixtures below are trimmed from real `claude -p
+  // --output-format json` output.
+  const ANSWER = {
+    symptom: "Checkout timed out under load.",
+    investigation: "Ruled out the payment provider.",
+    rootCause: "A migration held a lock on a hot table.",
+    fix: "Reran with CREATE INDEX CONCURRENTLY.",
+  };
+  function envelope(result: string, overrides: Record<string, unknown> = {}) {
+    return JSON.stringify({
+      is_error: false,
+      duration_api_ms: 2934,
+      num_turns: 1,
+      stop_reason: "end_turn",
+      session_id: "ec66b307-43c1-4bfa-a560-26908a36cda0",
+      total_cost_usd: 0.085209,
+      usage: { input_tokens: 2, output_tokens: 44 },
+      permission_denials: [],
+      subtype: "success",
+      api_error_status: null,
+      result,
+      type: "result",
+      duration_ms: 3262,
+      ...overrides,
+    });
+  }
+
+  it("unwraps the `claude -p --output-format json` result envelope", async () => {
+    const { synthesizeIncident } = await import("../src/commands/incidents.js");
+    const result = await synthesizeIncident("t", "d", async () => envelope(JSON.stringify(ANSWER)));
+    expect(result).toEqual(ANSWER);
+  });
+
+  it("unwraps an envelope whose result is wrapped in a ```json fence", async () => {
+    const { synthesizeIncident } = await import("../src/commands/incidents.js");
+    const fenced = "```json\n" + JSON.stringify(ANSWER, null, 2) + "\n```";
+    const result = await synthesizeIncident("t", "d", async () => envelope(fenced));
+    expect(result).toEqual(ANSWER);
+  });
+
+  it("tolerates the model prefacing the JSON object with prose", async () => {
+    const { synthesizeIncident } = await import("../src/commands/incidents.js");
+    const chatty = `Here's the summary you asked for:\n\n${JSON.stringify(ANSWER)}`;
+    const result = await synthesizeIncident("t", "d", async () => envelope(chatty));
+    expect(result).toEqual(ANSWER);
+  });
+
+  it("surfaces a `claude -p` error envelope as a clear error", async () => {
+    const { synthesizeIncident } = await import("../src/commands/incidents.js");
+    const errEnvelope = envelope("Credit balance is too low", { is_error: true, subtype: "error_during_execution" });
+    await expect(synthesizeIncident("t", "d", async () => errEnvelope)).rejects.toThrow(/claude -p/i);
+  });
+
+  it("windows a multi-megabyte transcript and caps the diff before building the prompt", async () => {
+    const { synthesizeIncident } = await import("../src/commands/incidents.js");
+    // Real Claude Code transcripts run 1.8–13MB. Passing one through
+    // untouched is both an ARG_MAX/cost problem and pointless — the tail is
+    // where the fix actually happened.
+    const transcript = Array.from({ length: 60_000 }, (_, i) => `{"turn":${i},"text":"padding padding"}`).join("\n");
+    const diff = "diff --git a/a.ts b/a.ts\n" + "+".repeat(500_000);
+    let seenPrompt = "";
+    await synthesizeIncident(transcript, diff, async (prompt) => {
+      seenPrompt = prompt;
+      return JSON.stringify(ANSWER);
+    });
+
+    expect(seenPrompt.length).toBeLessThan(200_000);
+    // The *end* of the transcript survives — that's the part describing the fix.
+    expect(seenPrompt).toContain(`{"turn":59999,"text":"padding padding"}`);
+    expect(seenPrompt).toContain(`{"turn":0,`) === false;
+    expect(seenPrompt).toMatch(/truncated/i);
+  });
+
+  it("passes short transcripts and diffs through untouched", async () => {
+    const { synthesizeIncident } = await import("../src/commands/incidents.js");
+    let seenPrompt = "";
+    await synthesizeIncident("the whole transcript", "the whole diff", async (prompt) => {
+      seenPrompt = prompt;
+      return JSON.stringify(ANSWER);
+    });
+    expect(seenPrompt).toContain("the whole transcript");
+    expect(seenPrompt).toContain("the whole diff");
+    expect(seenPrompt).not.toMatch(/truncated/i);
   });
 });
 
