@@ -19,7 +19,11 @@ function configPath(stateDir: string): string {
 export function readIncidentsConfig(stateDir: string): IncidentsConfig | undefined {
   const file = configPath(stateDir);
   if (!fs.existsSync(file)) return undefined;
-  return JSON.parse(fs.readFileSync(file, "utf8")) as IncidentsConfig;
+  try {
+    return JSON.parse(fs.readFileSync(file, "utf8")) as IncidentsConfig;
+  } catch {
+    return undefined;
+  }
 }
 
 export function writeIncidentsConfig(stateDir: string, config: IncidentsConfig): void {
@@ -59,7 +63,7 @@ export async function cmdIncidentsInit(opts: IncidentsInitOptions, log: (s: stri
 
 const CAPTURE_HOOK_ENTRY = {
   matcher: "Bash",
-  hooks: [{ type: "command", command: "skilljit capture-incident" }],
+  hooks: [{ type: "command", command: "skilljit capture-incident", timeout: 600 }],
 };
 
 export interface IncidentsInstallHookOptions {
@@ -102,16 +106,35 @@ export async function cmdIncidentsInstallHook(opts: IncidentsInstallHookOptions,
 }
 
 const FIX_MESSAGE_RE = /^(fix|fixes|fixed)[:(]|fixes #|closes #|resolves #/i;
-const INLINE_MESSAGE_RE = /-m\s+"([^"]*)"|-m\s+'([^']*)'/;
+const MESSAGE_FLAG_RE = /-a?m\s+(["'])([\s\S]*)$/;
 
-/** Extracts a `git commit -m "..."` message and checks it against a
- * fix-commit heuristic. A `git commit` with no inline -m (opens $EDITOR)
- * is intentionally not matched — this is a v1 scope limit, not a bug. */
+/**
+ * Extracts the message a `git commit` bash command would actually record,
+ * handling three shapes: a plain inline `-m "..."`/`-m '...'`, the
+ * combined short flag `-am`, and Claude Code's own heredoc form
+ * (`-m "$(cat <<'EOF' ... EOF )"`) — which every earlier anchored-regex
+ * attempt missed because it never unwrapped the heredoc before testing.
+ * Returns undefined for a non-commit command or a `git commit` with no
+ * inline message (opens $EDITOR — a v1 scope limit, not a bug).
+ */
+export function extractCommitMessage(bashCommand: string): string | undefined {
+  if (!/\bgit\s+commit\b/.test(bashCommand)) return undefined;
+  const match = MESSAGE_FLAG_RE.exec(bashCommand);
+  if (!match) return undefined;
+  const quote = match[1];
+  const rest = match[2];
+  const closeIndex = rest.lastIndexOf(quote);
+  const raw = closeIndex === -1 ? rest : rest.slice(0, closeIndex);
+
+  const heredocMatch = /^\$\(cat\s*<<\s*'([^']+)'\s*\n([\s\S]*?)\n\1\s*\)$/.exec(raw.trim());
+  if (heredocMatch) return heredocMatch[2];
+  return raw;
+}
+
+/** Checks an extracted commit message against a fix-commit heuristic. */
 export function looksLikeFixCommit(bashCommand: string): boolean {
-  if (!/\bgit\s+commit\b/.test(bashCommand)) return false;
-  const messageMatch = INLINE_MESSAGE_RE.exec(bashCommand);
-  if (!messageMatch) return false;
-  const message = messageMatch[1] ?? messageMatch[2] ?? "";
+  const message = extractCommitMessage(bashCommand);
+  if (!message) return false;
   return FIX_MESSAGE_RE.test(message);
 }
 

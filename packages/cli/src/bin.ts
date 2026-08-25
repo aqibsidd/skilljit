@@ -192,7 +192,7 @@ program
     for await (const chunk of process.stdin) chunks.push(chunk as Buffer);
     const payload = JSON.parse(Buffer.concat(chunks).toString("utf8"));
     const result = await runCaptureIncident(payload, { stateDir: defaultStateDir() });
-    if (result.captured) console.log(`skilljit: ${result.reason}`);
+    console.log(`skilljit: ${result.reason}`);
   });
 
 program.parseAsync(process.argv).catch((err) => {
