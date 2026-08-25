@@ -48,12 +48,44 @@ export async function cmdIncidentsInit(opts: IncidentsInitOptions, log: (s: stri
   const localClonePath = path.join(opts.stateDir, "incidents-write");
 
   if (fs.existsSync(localClonePath)) {
+    const { stdout } = await run("git", ["-C", localClonePath, "remote", "get-url", "origin"]);
+    const existingUrl = stdout.trim();
+    if (existingUrl !== opts.repoUrl) {
+      throw new Error(
+        `incidents already configured for ${existingUrl} — refusing to re-point the existing clone at ${opts.repoUrl}. Remove ${localClonePath} first if you really want to switch repos.`,
+      );
+    }
     log(`Updating existing local clone at ${localClonePath} ...`);
     await run("git", ["-C", localClonePath, "pull", "--quiet"]);
   } else {
     log(`Cloning ${opts.repoUrl} to ${localClonePath} ...`);
     fs.mkdirSync(opts.stateDir, { recursive: true });
     await run("git", ["clone", "--quiet", opts.repoUrl, localClonePath]);
+
+    let hasCommits = true;
+    try {
+      await run("git", ["-C", localClonePath, "rev-parse", "HEAD"]);
+    } catch {
+      hasCommits = false;
+    }
+    if (!hasCommits) {
+      log(`Remote repo is empty — creating an initial commit so captures have somewhere to push.`);
+      fs.writeFileSync(path.join(localClonePath, ".gitkeep"), "");
+      await run("git", ["-C", localClonePath, "add", ".gitkeep"]);
+      await run("git", [
+        "-C",
+        localClonePath,
+        "-c",
+        "user.email=skilljit@localhost",
+        "-c",
+        "user.name=skilljit",
+        "commit",
+        "-q",
+        "-m",
+        "chore: initialize incidents repo",
+      ]);
+      await run("git", ["-C", localClonePath, "push", "-u", "--quiet", "origin", "HEAD"]);
+    }
   }
 
   writeIncidentsConfig(opts.stateDir, { repoUrl: opts.repoUrl, localClonePath });
@@ -360,7 +392,7 @@ export async function runCaptureIncident(
       verified: false,
     };
 
-    await run("git", ["-C", config.localClonePath, "pull", "--quiet"]);
+    await run("git", ["-C", config.localClonePath, "pull", "--ff-only", "--quiet"]);
     const incidentsDir = path.join(config.localClonePath, "incidents");
     fs.mkdirSync(incidentsDir, { recursive: true });
     const filename = `${capturedAt.slice(0, 10)}-${commitSha.slice(0, 7)}.md`;
@@ -379,7 +411,7 @@ export async function runCaptureIncident(
       "-m",
       `incident: ${record.symptom.slice(0, 60)}`,
     ]);
-    await run("git", ["-C", config.localClonePath, "push", "--quiet"]);
+    await run("git", ["-C", config.localClonePath, "push", "-u", "--quiet", "origin", "HEAD"]);
 
     return { captured: true, reason: "incident captured and pushed" };
   } catch (err) {
