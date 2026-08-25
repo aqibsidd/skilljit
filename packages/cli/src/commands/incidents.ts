@@ -182,6 +182,8 @@ function defaultSynthesizeImpl(prompt: string): Promise<string> {
     const child = spawn("claude", ["-p", "--output-format", "json"]);
     let stdout = "";
     let stderr = "";
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
     child.stdout.on("data", (chunk) => {
       stdout += chunk;
     });
@@ -196,6 +198,12 @@ function defaultSynthesizeImpl(prompt: string): Promise<string> {
       }
       resolve(stdout);
     });
+    // Writing a multi-hundred-KB prompt can exceed the pipe buffer; if
+    // `claude` exits early (bad auth, unrecognized flag) before reading
+    // it all, the write errors as a stream "error" event, not a promise
+    // rejection — with no listener here, that would crash the hook
+    // process instead of failing this promise closed.
+    child.stdin.on("error", reject);
     child.stdin.write(prompt);
     child.stdin.end();
   });
