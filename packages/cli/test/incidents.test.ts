@@ -427,6 +427,7 @@ describe("runCaptureIncident", () => {
     // A source repo standing in for the codebase the fix was committed to.
     const codeRepo = fs.mkdtempSync(path.join(os.tmpdir(), "skilljit-capture-code-"));
     execFileSync("git", ["init", "-q", "-b", "main"], { cwd: codeRepo });
+    execFileSync("git", ["remote", "add", "origin", "git@example.com:acme/webapp.git"], { cwd: codeRepo });
     fs.writeFileSync(path.join(codeRepo, "app.ts"), "// fixed\n");
     execFileSync("git", ["add", "-A"], { cwd: codeRepo });
     execFileSync(
@@ -456,6 +457,7 @@ describe("runCaptureIncident", () => {
     expect(files).toHaveLength(1);
     const content = fs.readFileSync(path.join(localClonePath, "incidents", files[0]), "utf8");
     expect(content).toContain("Checkout timed out under load");
+    expect(content).toContain("acme/webapp.git");
 
     fs.rmSync(remote, { recursive: true, force: true });
     fs.rmSync(codeRepo, { recursive: true, force: true });
@@ -477,6 +479,7 @@ describe("runCaptureIncident", () => {
     const srcRepo = path.join(stateDir, "src-repo");
     fs.mkdirSync(srcRepo, { recursive: true });
     execFileSync("git", ["init", "-q", "-b", "main"], { cwd: srcRepo });
+    execFileSync("git", ["remote", "add", "origin", "git@example.com:acme/webapp.git"], { cwd: srcRepo });
     fs.writeFileSync(path.join(srcRepo, "app.ts"), "// fixed\n");
     execFileSync("git", ["add", "-A"], { cwd: srcRepo });
     execFileSync(
@@ -533,6 +536,7 @@ describe("runCaptureIncident", () => {
     const srcRepo = path.join(stateDir, "src-repo");
     fs.mkdirSync(srcRepo, { recursive: true });
     execFileSync("git", ["init", "-q", "-b", "main"], { cwd: srcRepo });
+    execFileSync("git", ["remote", "add", "origin", "git@example.com:acme/webapp.git"], { cwd: srcRepo });
     fs.writeFileSync(path.join(srcRepo, "app.ts"), "// fixed\n");
     execFileSync("git", ["add", "-A"], { cwd: srcRepo });
     execFileSync(
@@ -559,5 +563,41 @@ describe("runCaptureIncident", () => {
 
     expect(result.captured).toBe(false);
     expect(result.reason).not.toContain(secret);
+  });
+
+  it("skips capture when the actual last commit doesn't match what the command claimed", async () => {
+    const { execFileSync } = await import("node:child_process");
+    stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "skilljit-capture-"));
+    localClonePath = path.join(stateDir, "incidents-write");
+    fs.mkdirSync(localClonePath, { recursive: true });
+    const { writeIncidentsConfig, runCaptureIncident } = await import("../src/commands/incidents.js");
+    writeIncidentsConfig(stateDir, { repoUrl: "unused", localClonePath });
+
+    const srcRepo = path.join(stateDir, "src-repo");
+    fs.mkdirSync(srcRepo, { recursive: true });
+    execFileSync("git", ["init", "-q", "-b", "main"], { cwd: srcRepo });
+    execFileSync("git", ["remote", "add", "origin", "git@example.com:acme/webapp.git"], { cwd: srcRepo });
+    fs.writeFileSync(path.join(srcRepo, "app.ts"), "// unrelated\n");
+    execFileSync("git", ["add", "-A"], { cwd: srcRepo });
+    // The commit that actually landed has a different message than the
+    // Bash command claims — e.g. a pre-commit hook rewrote it, or the
+    // hook fired against a stale HEAD after a rejected commit.
+    execFileSync(
+      "git",
+      ["-c", "user.email=t@t.com", "-c", "user.name=t", "commit", "-q", "-m", "chore: unrelated housekeeping"],
+      { cwd: srcRepo },
+    );
+
+    let synthesizeCalled = false;
+    const result = await runCaptureIncident(makePayload({ cwd: srcRepo }), {
+      stateDir,
+      synthesizeImpl: async () => {
+        synthesizeCalled = true;
+        return "{}";
+      },
+    });
+
+    expect(result.captured).toBe(false);
+    expect(synthesizeCalled).toBe(false);
   });
 });

@@ -64,7 +64,9 @@ export interface IncidentRecord {
   /** What changed, in prose — references the commit, doesn't replace it. */
   fix: string;
   commitSha: string;
-  /** Where this incident came from, e.g. "git:git@example.com:team/incidents.git". */
+  /** The code repo this incident is about — its `origin` remote URL. Pairs
+   * with commitSha to point at the actual fix (not the separate repo
+   * incidents get distributed through). */
   repo: string;
   filesTouched?: string[];
   /** ISO timestamp of capture. */

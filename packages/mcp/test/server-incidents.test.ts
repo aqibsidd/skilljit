@@ -93,6 +93,22 @@ describe("skilljit MCP server — incidents", () => {
     expect(text).toContain("Flush the current page before checking for a next one.");
     expect(text).not.toContain("not been reviewed by a human");
   });
+
+  it("incident_find candidates include the repo field", async () => {
+    const result = await client.callTool({ name: "incident_find", arguments: { symptom: "checkout timeout" } });
+    const text = (result.content as any[])[0].text as string;
+    expect(text).toContain("acme/webapp.git");
+  });
+
+  it("incident_load renders the commit and repo it's about", async () => {
+    const result = await client.callTool({
+      name: "incident_load",
+      arguments: { id: "git:acme/webapp/incidents/a1b2c3d" },
+    });
+    const text = (result.content as any[])[0].text as string;
+    expect(text).toContain("a1b2c3d4e5f6");
+    expect(text).toContain("acme/webapp.git");
+  });
 });
 
 describe("skilljit MCP server — incidents in a separate catalog file", () => {

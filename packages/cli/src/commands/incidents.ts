@@ -364,6 +364,16 @@ export async function runCaptureIncident(
 
     const { stdout: shaOut } = await run("git", ["-C", payload.cwd, "rev-parse", "HEAD"]);
     const commitSha = shaOut.trim();
+
+    const expectedSubject = (extractCommitMessage(command) ?? "").split("\n")[0].trim();
+    const { stdout: actualSubjectOut } = await run("git", ["-C", payload.cwd, "log", "-1", "--format=%s"]);
+    if (actualSubjectOut.trim() !== expectedSubject) {
+      return { captured: false, reason: "the commit did not actually happen as the command claimed — skipping" };
+    }
+
+    const { stdout: codeRepoUrlOut } = await run("git", ["-C", payload.cwd, "remote", "get-url", "origin"]);
+    const codeRepoUrl = codeRepoUrlOut.trim();
+
     const { stdout: diff } = await run("git", ["-C", payload.cwd, "show", commitSha]);
     const transcript = readFile(payload.transcript_path);
 
@@ -387,7 +397,7 @@ export async function runCaptureIncident(
       rootCause: redactedFields.rootCause.text,
       fix: redactedFields.fix.text,
       commitSha,
-      repo: `git:${config.repoUrl}`,
+      repo: codeRepoUrl,
       capturedAt,
       verified: false,
     };
