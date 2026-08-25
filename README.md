@@ -99,6 +99,12 @@ Add to your MCP client config (e.g. `claude_desktop_config.json`):
 }
 ```
 
+Claude Code users can add it via the CLI instead of hand-editing JSON:
+
+```bash
+claude mcp add skilljit -- npx -y skilljit serve
+```
+
 Other commands: `skilljit stats` (catalog size + how to read live savings),
 `skilljit init <configPath>` (preview routing your existing MCP servers through
 skilljit — never mutates the original), `skilljit adopt <configPath>` (apply it),
