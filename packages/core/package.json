@@ -1,6 +1,6 @@
 {
   "name": "@skilljit/core",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "Local catalog, full-text search, and token accounting for skilljit",
   "type": "module",
   "main": "./dist/index.js",
