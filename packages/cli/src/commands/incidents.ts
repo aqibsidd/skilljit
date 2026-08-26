@@ -332,6 +332,29 @@ export interface CaptureIncidentOptions {
   synthesizeImpl?: (prompt: string) => Promise<string>;
 }
 
+const DEFAULT_COMMITTER = { name: "skilljit", email: "skilljit@localhost" };
+
+/**
+ * Looks up the developer's own git identity from the code repo (not the
+ * incidents-write clone, which has no reason to carry it) so captured
+ * incidents are attributed to whoever actually fixed the bug rather than
+ * a generic "skilljit" bot account. Falls back to that generic identity
+ * if either value is unset — `git config user.name`/`user.email` exit
+ * non-zero when unconfigured, and an empty value is treated the same way.
+ */
+async function getCaptureCommitter(run: ExecFileFn, codeRepoCwd: string): Promise<{ name: string; email: string }> {
+  try {
+    const { stdout: nameOut } = await run("git", ["-C", codeRepoCwd, "config", "user.name"]);
+    const { stdout: emailOut } = await run("git", ["-C", codeRepoCwd, "config", "user.email"]);
+    const name = nameOut.trim();
+    const email = emailOut.trim();
+    if (name && email) return { name, email };
+  } catch {
+    // Unconfigured — fall through to the default below.
+  }
+  return DEFAULT_COMMITTER;
+}
+
 /**
  * The full capture pipeline, invoked by the installed PostToolUse hook.
  * Every early-exit path returns {captured: false, reason} rather than
@@ -381,6 +404,7 @@ export async function runCaptureIncident(
 
     const { stdout: codeRepoUrlOut } = await run("git", ["-C", payload.cwd, "remote", "get-url", "origin"]);
     const codeRepoUrl = codeRepoUrlOut.trim();
+    const committer = await getCaptureCommitter(run, payload.cwd);
 
     const { stdout: diff } = await run("git", ["-C", payload.cwd, "show", commitSha]);
     const transcript = readFile(payload.transcript_path);
@@ -421,9 +445,9 @@ export async function runCaptureIncident(
       "-C",
       config.localClonePath,
       "-c",
-      "user.email=skilljit@localhost",
+      `user.email=${committer.email}`,
       "-c",
-      "user.name=skilljit",
+      `user.name=${committer.name}`,
       "commit",
       "-q",
       "-m",

@@ -463,6 +463,119 @@ describe("runCaptureIncident", () => {
     fs.rmSync(codeRepo, { recursive: true, force: true });
   });
 
+  it("attributes the incident commit to the developer's own git identity when the code repo has one configured", async () => {
+    const { execFileSync } = await import("node:child_process");
+    stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "skilljit-capture-"));
+
+    const remote = fs.mkdtempSync(path.join(os.tmpdir(), "skilljit-capture-remote-"));
+    execFileSync("git", ["init", "-q", "--bare", "-b", "main", remote]);
+    localClonePath = path.join(stateDir, "incidents-write");
+    execFileSync("git", ["clone", "-q", remote, localClonePath]);
+    execFileSync("sh", ["-c", `cd '${localClonePath}' && git -c user.email=t@t.com -c user.name=t commit --allow-empty -q -m init`]);
+    execFileSync("git", ["push", "-q"], { cwd: localClonePath });
+
+    const { writeIncidentsConfig, runCaptureIncident } = await import("../src/commands/incidents.js");
+    writeIncidentsConfig(stateDir, { repoUrl: remote, localClonePath });
+
+    const codeRepo = fs.mkdtempSync(path.join(os.tmpdir(), "skilljit-capture-code-"));
+    execFileSync("git", ["init", "-q", "-b", "main"], { cwd: codeRepo });
+    execFileSync("git", ["remote", "add", "origin", "git@example.com:acme/webapp.git"], { cwd: codeRepo });
+    // Persistent repo config this time (not a command-scoped -c override) —
+    // this is what a real developer's checkout actually has.
+    execFileSync("git", ["config", "user.name", "Jane Dev"], { cwd: codeRepo });
+    execFileSync("git", ["config", "user.email", "jane@example.com"], { cwd: codeRepo });
+    fs.writeFileSync(path.join(codeRepo, "app.ts"), "// fixed\n");
+    execFileSync("git", ["add", "-A"], { cwd: codeRepo });
+    execFileSync("git", ["commit", "-q", "-m", "fix: checkout timeout"], { cwd: codeRepo });
+
+    const transcriptPath = path.join(stateDir, "transcript.jsonl");
+    fs.writeFileSync(transcriptPath, JSON.stringify({ role: "user", content: "checkout was timing out" }));
+
+    const fakeSynthesize = async () =>
+      JSON.stringify({
+        symptom: "Checkout timed out under load.",
+        investigation: "Ruled out the payment provider.",
+        rootCause: "A migration held a lock on a hot table.",
+        fix: "Reran with CREATE INDEX CONCURRENTLY.",
+      });
+
+    const result = await runCaptureIncident(makePayload({ cwd: codeRepo, transcript_path: transcriptPath }), {
+      stateDir,
+      synthesizeImpl: fakeSynthesize,
+    });
+
+    expect(result.captured).toBe(true);
+    const author = execFileSync("git", ["-C", localClonePath, "log", "-1", "--format=%an|%ae"], { encoding: "utf8" }).trim();
+    expect(author).toBe("Jane Dev|jane@example.com");
+
+    fs.rmSync(remote, { recursive: true, force: true });
+    fs.rmSync(codeRepo, { recursive: true, force: true });
+  });
+
+  it("falls back to the skilljit identity when the code repo has none configured", async () => {
+    const { execFileSync, execFile } = await import("node:child_process");
+    const { promisify } = await import("node:util");
+    const execFileAsync = promisify(execFile);
+    // GIT_CONFIG_GLOBAL/SYSTEM=/dev/null isolates this from whatever git
+    // identity happens to be configured on the machine actually running
+    // this test — without it, a developer's own global user.name/email
+    // would leak in and this "no identity configured" scenario could
+    // never be reproduced on a machine that has one set (i.e. most of
+    // them, including the one this was written on).
+    const isolatedExecFile = (cmd: string, args: string[]) =>
+      execFileAsync(cmd, args, {
+        maxBuffer: 50 * 1024 * 1024,
+        env: { ...process.env, GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_SYSTEM: "/dev/null" },
+      });
+
+    stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "skilljit-capture-"));
+
+    const remote = fs.mkdtempSync(path.join(os.tmpdir(), "skilljit-capture-remote-"));
+    execFileSync("git", ["init", "-q", "--bare", "-b", "main", remote]);
+    localClonePath = path.join(stateDir, "incidents-write");
+    execFileSync("git", ["clone", "-q", remote, localClonePath]);
+    execFileSync("sh", ["-c", `cd '${localClonePath}' && git -c user.email=t@t.com -c user.name=t commit --allow-empty -q -m init`]);
+    execFileSync("git", ["push", "-q"], { cwd: localClonePath });
+
+    const { writeIncidentsConfig, runCaptureIncident } = await import("../src/commands/incidents.js");
+    writeIncidentsConfig(stateDir, { repoUrl: remote, localClonePath });
+
+    const codeRepo = fs.mkdtempSync(path.join(os.tmpdir(), "skilljit-capture-code-"));
+    execFileSync("git", ["init", "-q", "-b", "main"], { cwd: codeRepo });
+    execFileSync("git", ["remote", "add", "origin", "git@example.com:acme/webapp.git"], { cwd: codeRepo });
+    fs.writeFileSync(path.join(codeRepo, "app.ts"), "// fixed\n");
+    execFileSync("git", ["add", "-A"], { cwd: codeRepo });
+    execFileSync(
+      "git",
+      ["-c", "user.email=t@t.com", "-c", "user.name=t", "commit", "-q", "-m", "fix: checkout timeout"],
+      { cwd: codeRepo },
+    );
+
+    const transcriptPath = path.join(stateDir, "transcript.jsonl");
+    fs.writeFileSync(transcriptPath, JSON.stringify({ role: "user", content: "checkout was timing out" }));
+
+    const fakeSynthesize = async () =>
+      JSON.stringify({
+        symptom: "Checkout timed out under load.",
+        investigation: "Ruled out the payment provider.",
+        rootCause: "A migration held a lock on a hot table.",
+        fix: "Reran with CREATE INDEX CONCURRENTLY.",
+      });
+
+    const result = await runCaptureIncident(makePayload({ cwd: codeRepo, transcript_path: transcriptPath }), {
+      stateDir,
+      synthesizeImpl: fakeSynthesize,
+      execFileImpl: isolatedExecFile,
+    });
+
+    expect(result.captured).toBe(true);
+    const author = execFileSync("git", ["-C", localClonePath, "log", "-1", "--format=%an|%ae"], { encoding: "utf8" }).trim();
+    expect(author).toBe("skilljit|skilljit@localhost");
+
+    fs.rmSync(remote, { recursive: true, force: true });
+    fs.rmSync(codeRepo, { recursive: true, force: true });
+  });
+
   it("fails closed and writes nothing when the synthesized response has the wrong shape", async () => {
     const { execFileSync } = await import("node:child_process");
     stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "skilljit-capture-"));
