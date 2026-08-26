@@ -11,7 +11,10 @@ notification. It's broken in Claude Desktop —
 documents it being ignored across 336+ versions (empty client capabilities, an SDK
 handler that never fires, a frozen tool-list reference) and Anthropic closed the issue
 as **not planned**. The issue's own recommended workaround is to *"declare all tools
-at startup and dispatch internally via mode/action parameters."*
+at startup and dispatch internally via mode/action parameters."* This isn't an
+isolated bug either — a broader MCP spec-compliance tracking issue,
+[anthropics/claude-code#31893](https://github.com/anthropics/claude-code/issues/31893),
+covers `list_changed` alongside other protocol gaps (progress, sampling) together.
 
 That's what skilljit does. Its MCP tool list is **fixed and never changes** — a
 small, constant handful of tools, always. Skills and upstream MCP tools are found
@@ -213,6 +216,18 @@ Safety comes first here, since this touches configs you already rely on:
   back.
 - One upstream MCP server being unavailable doesn't affect the others: `tool_call`
   returns a clean error for that server, everything else keeps working.
+
+**Relationship to Claude Code's native Tool Search:** Anthropic shipped a built-in MCP
+tool search (`defer_loading: true`) that does something similar for servers whose
+authors opt into it. skilljit's proxy works today, unconditionally, on any existing
+MCP server — no cooperation from the server's author required, and no waiting for
+them to adopt anything. That's the actual gap skilljit fills.
+
+**Heads up if you `--keep` many servers:** Claude enforces a 256-tool cap across all
+connected MCP connectors, with silent truncation past that (alphabetically-first
+tools kept). skilljit's own fixed surface is nowhere near this, but a large `--keep`
+list leaves those servers' tools fully passthrough-visible, so it's worth keeping in
+mind if you lean on `--keep` heavily.
 
 ## Incident memory — sharing debugging context across a team
 
