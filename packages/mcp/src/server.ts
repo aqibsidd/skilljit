@@ -258,6 +258,11 @@ export function createServer(opts: CreateServerOptions): ServerHandle {
             content: [{ type: "text" as const, text: `No incident found with id "${id}". Call incident_find first.` }],
           };
         }
+        if (incident.revoked) {
+          const text = `This incident was revoked${incident.revokedReason ? `: ${incident.revokedReason}` : "."} It is no longer trustworthy and its content is withheld.`;
+          recordActual("incident_load", text);
+          return { isError: true, content: [{ type: "text" as const, text }] };
+        }
         let text = `## Symptom\n${incident.symptom}\n\n## Investigation\n${incident.investigation}\n\n## Root cause\n${incident.rootCause}\n\n## Fix\n${incident.fix}\n\n## Commit\n${incident.commitSha} (${incident.repo})`;
         if (!incident.verified) {
           text = `⚠️ This incident was auto-captured and has not been reviewed by a human. Verify before trusting it fully.\n\n${text}`;

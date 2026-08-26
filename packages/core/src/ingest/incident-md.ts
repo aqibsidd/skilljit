@@ -39,6 +39,8 @@ export function parseIncidentMd(content: string, ctx: IncidentParseContext): Inc
     return null;
   }
   const verified = typeof fm.verified === "boolean" ? fm.verified : false;
+  const revoked = typeof fm.revoked === "boolean" ? fm.revoked : false;
+  const revokedReason = typeof fm.revokedReason === "string" ? fm.revokedReason : undefined;
   const filesTouched = Array.isArray(fm.filesTouched) ? fm.filesTouched.map(String) : undefined;
 
   const body = match[2] ?? "";
@@ -59,6 +61,8 @@ export function parseIncidentMd(content: string, ctx: IncidentParseContext): Inc
     filesTouched,
     capturedAt,
     verified,
+    revoked,
+    revokedReason,
   };
 }
 
@@ -72,9 +76,13 @@ export function serializeIncidentMd(record: Omit<IncidentRecord, "id">): string 
     repo: record.repo,
     capturedAt: record.capturedAt,
     verified: record.verified,
+    revoked: record.revoked,
   };
   if (record.filesTouched && record.filesTouched.length > 0) {
     frontmatter.filesTouched = record.filesTouched;
+  }
+  if (record.revokedReason) {
+    frontmatter.revokedReason = record.revokedReason;
   }
   const yamlBlock = YAML.stringify(frontmatter).trimEnd();
   return `---\n${yamlBlock}\n---\n## Investigation\n\n${record.investigation}\n\n## Fix\n\n${record.fix}\n`;

@@ -199,6 +199,7 @@ describe("Catalog", () => {
       repo: "git:git@example.com:acme/webapp.git",
       capturedAt: "2026-08-24T12:00:00.000Z",
       verified: false,
+      revoked: false,
       ...overrides,
     };
   }
@@ -239,5 +240,56 @@ describe("Catalog", () => {
     catalog.upsertIncidents([makeIncident()]);
     expect(catalog.count()).toBe(1);
     expect(catalog.incidentCount()).toBe(1);
+  });
+
+  it("excludes revoked incidents from search results", () => {
+    catalog.upsertIncidents([makeIncident({ revoked: true, revokedReason: "wrong root cause" })]);
+    const hits = catalog.searchIncidents("checkout timeout", 8);
+    expect(hits).toHaveLength(0);
+  });
+
+  it("still returns a revoked incident by direct id lookup, with its reason", () => {
+    catalog.upsertIncidents([makeIncident({ revoked: true, revokedReason: "wrong root cause" })]);
+    const found = catalog.getIncident("git:acme/webapp/incidents/a1b2c3d");
+    expect(found?.revoked).toBe(true);
+    expect(found?.revokedReason).toBe("wrong root cause");
+  });
+
+  it("re-upserting with revoked: true retroactively hides a previously-findable incident", () => {
+    catalog.upsertIncidents([makeIncident()]);
+    expect(catalog.searchIncidents("checkout timeout", 8)).toHaveLength(1);
+    catalog.upsertIncidents([makeIncident({ revoked: true })]);
+    expect(catalog.searchIncidents("checkout timeout", 8)).toHaveLength(0);
+  });
+
+  it("opens a pre-existing catalog.db created before revoked/revoked_reason existed, without crashing", () => {
+    catalog.upsertIncidents([makeIncident()]);
+    catalog.close();
+    // Simulate a catalog created by an older skilljit version: same file,
+    // but drop the revoked/revoked_reason columns this version expects.
+    const legacyDb = new Database(dbPath);
+    legacyDb.exec(`ALTER TABLE incidents RENAME TO incidents_new`);
+    legacyDb.exec(`
+      CREATE TABLE incidents (
+        id TEXT PRIMARY KEY, symptom TEXT NOT NULL, investigation TEXT NOT NULL,
+        root_cause TEXT NOT NULL, fix TEXT NOT NULL, commit_sha TEXT NOT NULL,
+        repo TEXT NOT NULL, files_touched TEXT, captured_at TEXT NOT NULL,
+        verified INTEGER NOT NULL DEFAULT 0
+      )
+    `);
+    legacyDb.exec(`
+      INSERT INTO incidents (id, symptom, investigation, root_cause, fix, commit_sha, repo, files_touched, captured_at, verified)
+      SELECT id, symptom, investigation, root_cause, fix, commit_sha, repo, files_touched, captured_at, verified FROM incidents_new
+    `);
+    legacyDb.exec(`DROP TABLE incidents_new`);
+    legacyDb.close();
+
+    const reopened = new Catalog(dbPath);
+    expect(reopened.incidentCount()).toBe(1);
+    expect(reopened.getIncident("git:acme/webapp/incidents/a1b2c3d")?.revoked).toBe(false);
+    reopened.upsertIncidents([makeIncident({ revoked: true, revokedReason: "test" })]);
+    expect(reopened.getIncident("git:acme/webapp/incidents/a1b2c3d")?.revokedReason).toBe("test");
+    reopened.close();
+    catalog = new Catalog(dbPath); // afterEach expects `catalog` to still be open+closeable
   });
 });

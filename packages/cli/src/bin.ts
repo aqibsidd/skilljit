@@ -11,7 +11,13 @@ import { latestAdoption, resolveManagedUpstreams } from "@skilljit/proxy";
 import { runSync } from "./commands/sync.js";
 import { runSearch, formatSearchResults } from "./commands/search.js";
 import { defaultStateDir, cmdInit, cmdAdopt, cmdRestore, cmdDoctor } from "./commands/proxy.js";
-import { cmdIncidentsInit, cmdIncidentsInstallHook, runCaptureIncident, readIncidentsConfig } from "./commands/incidents.js";
+import {
+  cmdIncidentsInit,
+  cmdIncidentsInstallHook,
+  cmdIncidentsRevoke,
+  runCaptureIncident,
+  readIncidentsConfig,
+} from "./commands/incidents.js";
 
 // Read the real version from this package's own package.json rather than
 // hardcoding a string here that silently drifts from every release.
@@ -182,6 +188,14 @@ incidentsCmd
   .option("--settings-path <path>", "settings.json path", path.join(os.homedir(), ".claude", "settings.json"))
   .action(async (options: { yes?: boolean; settingsPath: string }) => {
     await cmdIncidentsInstallHook({ settingsPath: options.settingsPath, yes: options.yes }, (l) => console.log(l));
+  });
+
+incidentsCmd
+  .command("revoke <id>")
+  .description("Retract a previously-captured incident (kept, but excluded from incident_find/incident_load)")
+  .option("--reason <text>", "why this incident is being revoked")
+  .action(async (id: string, options: { reason?: string }) => {
+    await cmdIncidentsRevoke({ id, reason: options.reason, stateDir: defaultStateDir() }, (l) => console.log(l));
   });
 
 program

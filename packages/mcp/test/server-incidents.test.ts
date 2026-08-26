@@ -28,6 +28,7 @@ describe("skilljit MCP server — incidents", () => {
         repo: "git:git@example.com:acme/webapp.git",
         capturedAt: "2026-08-24T12:00:00.000Z",
         verified: false,
+        revoked: false,
       },
       {
         id: "git:acme/webapp/incidents/f00d1e5",
@@ -39,6 +40,20 @@ describe("skilljit MCP server — incidents", () => {
         repo: "git:git@example.com:acme/webapp.git",
         capturedAt: "2026-08-24T13:00:00.000Z",
         verified: true,
+        revoked: false,
+      },
+      {
+        id: "git:acme/webapp/incidents/dead000",
+        symptom: "Login page returns 500 after a cache flush.",
+        investigation: "Traced to a stale session key format.",
+        rootCause: "Turned out to be a red herring — the real cause was unrelated.",
+        fix: "N/A — this diagnosis was wrong.",
+        commitSha: "dead0001111",
+        repo: "git:git@example.com:acme/webapp.git",
+        capturedAt: "2026-08-24T14:00:00.000Z",
+        verified: false,
+        revoked: true,
+        revokedReason: "misdiagnosed root cause",
       },
     ]);
     seed.close();
@@ -108,6 +123,25 @@ describe("skilljit MCP server — incidents", () => {
     const text = (result.content as any[])[0].text as string;
     expect(text).toContain("a1b2c3d4e5f6");
     expect(text).toContain("acme/webapp.git");
+  });
+
+  it("incident_find never surfaces a revoked incident, even matching its own symptom", async () => {
+    const result = await client.callTool({ name: "incident_find", arguments: { symptom: "login page 500 cache" } });
+    const text = (result.content as any[])[0].text as string;
+    expect(text).not.toContain("dead000");
+  });
+
+  it("incident_load refuses a revoked incident's content and reports the reason", async () => {
+    const result = await client.callTool({
+      name: "incident_load",
+      arguments: { id: "git:acme/webapp/incidents/dead000" },
+    });
+    const text = (result.content as any[])[0].text as string;
+    expect(result.isError).toBe(true);
+    expect(text).toContain("revoked");
+    expect(text).toContain("misdiagnosed root cause");
+    expect(text).not.toContain("stale session key");
+    expect(text).not.toContain("N/A — this diagnosis was wrong");
   });
 });
 

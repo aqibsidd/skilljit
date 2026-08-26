@@ -63,7 +63,9 @@ CREATE TABLE IF NOT EXISTS incidents (
   repo         TEXT NOT NULL,
   files_touched TEXT,
   captured_at  TEXT NOT NULL,
-  verified     INTEGER NOT NULL DEFAULT 0
+  verified     INTEGER NOT NULL DEFAULT 0,
+  revoked      INTEGER NOT NULL DEFAULT 0,
+  revoked_reason TEXT
 );
 
 CREATE VIRTUAL TABLE IF NOT EXISTS incidents_fts USING fts5(
@@ -112,6 +114,13 @@ export class Catalog {
     const columns = this.db.prepare(`PRAGMA table_info(skills)`).all() as { name: string }[];
     if (!columns.some((c) => c.name === "files_json")) {
       this.db.exec(`ALTER TABLE skills ADD COLUMN files_json TEXT`);
+    }
+    const incidentColumns = this.db.prepare(`PRAGMA table_info(incidents)`).all() as { name: string }[];
+    if (!incidentColumns.some((c) => c.name === "revoked")) {
+      this.db.exec(`ALTER TABLE incidents ADD COLUMN revoked INTEGER NOT NULL DEFAULT 0`);
+    }
+    if (!incidentColumns.some((c) => c.name === "revoked_reason")) {
+      this.db.exec(`ALTER TABLE incidents ADD COLUMN revoked_reason TEXT`);
     }
     this.db.exec(
       `INSERT OR IGNORE INTO ledger_totals (id, baseline_tokens, actual_tokens, session_count) VALUES (1, 0, 0, 0)`,
@@ -296,8 +305,8 @@ export class Catalog {
 
   upsertIncidents(incidents: IncidentRecord[]): void {
     const upsert = this.db.prepare(`
-      INSERT INTO incidents (id, symptom, investigation, root_cause, fix, commit_sha, repo, files_touched, captured_at, verified)
-      VALUES (@id, @symptom, @investigation, @rootCause, @fix, @commitSha, @repo, @filesTouched, @capturedAt, @verified)
+      INSERT INTO incidents (id, symptom, investigation, root_cause, fix, commit_sha, repo, files_touched, captured_at, verified, revoked, revoked_reason)
+      VALUES (@id, @symptom, @investigation, @rootCause, @fix, @commitSha, @repo, @filesTouched, @capturedAt, @verified, @revoked, @revokedReason)
       ON CONFLICT(id) DO UPDATE SET
         symptom = excluded.symptom,
         investigation = excluded.investigation,
@@ -307,7 +316,9 @@ export class Catalog {
         repo = excluded.repo,
         files_touched = excluded.files_touched,
         captured_at = excluded.captured_at,
-        verified = excluded.verified
+        verified = excluded.verified,
+        revoked = excluded.revoked,
+        revoked_reason = excluded.revoked_reason
     `);
     const deleteFts = this.db.prepare(`DELETE FROM incidents_fts WHERE id = ?`);
     const insertFts = this.db.prepare(`INSERT INTO incidents_fts (id, symptom) VALUES (?, ?)`);
@@ -325,6 +336,8 @@ export class Catalog {
           filesTouched: inc.filesTouched && inc.filesTouched.length > 0 ? JSON.stringify(inc.filesTouched) : null,
           capturedAt: inc.capturedAt,
           verified: inc.verified ? 1 : 0,
+          revoked: inc.revoked ? 1 : 0,
+          revokedReason: inc.revokedReason ?? null,
         });
         deleteFts.run(inc.id);
         insertFts.run(inc.id, inc.symptom);
@@ -349,7 +362,7 @@ export class Catalog {
                bm25(incidents_fts) AS rank
         FROM incidents_fts
         JOIN incidents i ON i.id = incidents_fts.id
-        WHERE incidents_fts MATCH ?
+        WHERE incidents_fts MATCH ? AND i.revoked = 0
         ORDER BY rank
         LIMIT ?
       `,
@@ -364,6 +377,7 @@ export class Catalog {
         repo: row.repo,
         capturedAt: row.captured_at,
         verified: !!row.verified,
+        revoked: false,
       } as Omit<IncidentRecord, "investigation" | "fix">,
       rank: row.rank,
     }));
@@ -435,5 +449,7 @@ function rowToIncident(row: any): IncidentRecord {
     filesTouched: row.files_touched ? JSON.parse(row.files_touched) : undefined,
     capturedAt: row.captured_at,
     verified: !!row.verified,
+    revoked: !!row.revoked,
+    revokedReason: row.revoked_reason ?? undefined,
   };
 }

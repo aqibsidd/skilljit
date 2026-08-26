@@ -262,6 +262,20 @@ Every auto-captured incident starts `verified: false` and says so loudly in
 Security, below). Nothing here pushes context at anyone proactively: a teammate
 only sees an incident when they call `incident_find` themselves.
 
+If a captured incident turns out wrong, or leaked something it shouldn't have,
+retract it:
+
+```bash
+skilljit incidents revoke <id> --reason "misdiagnosed root cause"
+```
+
+This marks the record revoked and pushes the change — it isn't deleted, since
+there's no mechanism to detect a deleted file and drop the matching row on
+`sync`. Once a teammate's next `sync` picks it up, `incident_find` stops
+surfacing it and `incident_load` refuses to return its content, reporting the
+revocation and reason instead. Anyone with push access to the incidents repo
+can revoke — same trust boundary as capture itself, no separate auth system.
+
 ## Security
 
 Skills are, functionally, instructions from a stranger that an agent will follow —
@@ -320,7 +334,7 @@ skilljit/
   packages/proxy/    upstream MCP server management, config adopt/restore, tool_find/tool_call routing
   packages/mcp/      the MCP stdio server (the fixed tool surface, see "The six tools" above)
   packages/cli/      skilljit sync | search | serve | stats | init | adopt | restore | doctor |
-                     incidents init | incidents install-hook
+                     incidents init | incidents install-hook | incidents revoke
   python/            pip package — CLI shim + read-only query API for Agent SDK users
   bench/             labeled task→skill eval set + recall@k harness
 ```

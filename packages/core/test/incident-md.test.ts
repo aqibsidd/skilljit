@@ -13,6 +13,7 @@ describe("serializeIncidentMd + parseIncidentMd", () => {
     filesTouched: ["migrations/0042_add_index.sql"],
     capturedAt: "2026-08-24T12:00:00.000Z",
     verified: false,
+    revoked: false,
   };
 
   it("round-trips every field through serialize -> parse", () => {
@@ -40,6 +41,26 @@ describe("serializeIncidentMd + parseIncidentMd", () => {
     const md = serializeIncidentMd(record).replace(/verified: false\n/, "");
     const parsed = parseIncidentMd(md, { source: record.repo });
     expect(parsed?.verified).toBe(false);
+  });
+
+  it("round-trips revoked and revokedReason", () => {
+    const revokedRecord = { ...record, revoked: true, revokedReason: "misdiagnosed root cause" };
+    const md = serializeIncidentMd(revokedRecord);
+    const parsed = parseIncidentMd(md, { source: record.repo });
+    expect(parsed?.revoked).toBe(true);
+    expect(parsed?.revokedReason).toBe("misdiagnosed root cause");
+  });
+
+  it("omits revokedReason from the frontmatter when not revoked", () => {
+    const md = serializeIncidentMd(record);
+    expect(md).not.toContain("revokedReason");
+  });
+
+  it("defaults revoked to false and revokedReason to undefined when the frontmatter omits them", () => {
+    const md = serializeIncidentMd(record).replace(/revoked: false\n/, "");
+    const parsed = parseIncidentMd(md, { source: record.repo });
+    expect(parsed?.revoked).toBe(false);
+    expect(parsed?.revokedReason).toBeUndefined();
   });
 
   it("returns null for content with no frontmatter", () => {

@@ -2,7 +2,14 @@ import { describe, it, expect, afterEach } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { readIncidentsConfig, writeIncidentsConfig, cmdIncidentsInit, cmdIncidentsInstallHook } from "../src/commands/incidents.js";
+import {
+  readIncidentsConfig,
+  writeIncidentsConfig,
+  cmdIncidentsInit,
+  cmdIncidentsInstallHook,
+  cmdIncidentsRevoke,
+} from "../src/commands/incidents.js";
+import { serializeIncidentMd } from "@skilljit/core";
 
 describe("incidents config", () => {
   let stateDir: string;
@@ -96,6 +103,95 @@ describe("cmdIncidentsInit", () => {
 
     // The recorded config still points at the original repo, not the new one.
     expect(readIncidentsConfig(stateDir)?.repoUrl).toBe(srcRepo);
+  });
+});
+
+describe("cmdIncidentsRevoke", () => {
+  let stateDir: string;
+  let remote: string;
+  afterEach(() => {
+    fs.rmSync(stateDir, { recursive: true, force: true });
+    fs.rmSync(remote, { recursive: true, force: true });
+  });
+
+  function seedIncident(localClonePath: string, overrides: Partial<Parameters<typeof serializeIncidentMd>[0]> = {}) {
+    const record = {
+      symptom: "Checkout requests time out under load after a deploy.",
+      investigation: "Ruled out the payment provider. Traced it to a migration holding a lock.",
+      rootCause: "The migration ran ACCESS EXCLUSIVE against a hot table.",
+      fix: "Reran the migration with CREATE INDEX CONCURRENTLY.",
+      commitSha: "a1b2c3d4e5f6",
+      repo: "git@example.com:acme/webapp.git",
+      capturedAt: "2026-08-24T12:00:00.000Z",
+      verified: false,
+      revoked: false,
+      ...overrides,
+    };
+    const incidentsDir = path.join(localClonePath, "incidents");
+    fs.mkdirSync(incidentsDir, { recursive: true });
+    const filename = `${record.capturedAt.slice(0, 10)}-${record.commitSha.slice(0, 7)}.md`;
+    fs.writeFileSync(path.join(incidentsDir, filename), serializeIncidentMd(record));
+    return { filename, id: `git:${remote}/incidents/${record.commitSha.slice(0, 7)}` };
+  }
+
+  it("marks an incident revoked, commits, and pushes", async () => {
+    const { execFileSync } = await import("node:child_process");
+    stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "skilljit-revoke-"));
+    remote = fs.mkdtempSync(path.join(os.tmpdir(), "skilljit-revoke-remote-"));
+    execFileSync("git", ["init", "-q", "--bare", "-b", "main", remote]);
+
+    const localClonePath = path.join(stateDir, "incidents-write");
+    execFileSync("git", ["clone", "-q", remote, localClonePath]);
+    execFileSync("sh", ["-c", `cd '${localClonePath}' && git -c user.email=t@t.com -c user.name=t commit --allow-empty -q -m init`]);
+    execFileSync("git", ["push", "-q"], { cwd: localClonePath });
+
+    const { filename, id } = seedIncident(localClonePath);
+    execFileSync("git", ["add", "-A"], { cwd: localClonePath });
+    execFileSync("git", ["-c", "user.email=t@t.com", "-c", "user.name=t", "commit", "-q", "-m", "incident: seed"], {
+      cwd: localClonePath,
+    });
+    execFileSync("git", ["push", "-q"], { cwd: localClonePath });
+
+    writeIncidentsConfig(stateDir, { repoUrl: remote, localClonePath });
+
+    const logs: string[] = [];
+    await cmdIncidentsRevoke({ id, reason: "misdiagnosed root cause", stateDir }, (l) => logs.push(l));
+
+    const content = fs.readFileSync(path.join(localClonePath, "incidents", filename), "utf8");
+    expect(content).toContain("revoked: true");
+    expect(content).toContain("misdiagnosed root cause");
+    expect(logs.join("\n")).toContain(id);
+
+    // Pushed — a fresh clone of the remote sees the revocation too.
+    const freshClone = fs.mkdtempSync(path.join(os.tmpdir(), "skilljit-revoke-check-"));
+    execFileSync("git", ["clone", "-q", remote, freshClone]);
+    const freshContent = fs.readFileSync(path.join(freshClone, "incidents", filename), "utf8");
+    expect(freshContent).toContain("revoked: true");
+    fs.rmSync(freshClone, { recursive: true, force: true });
+  });
+
+  it("throws a clear error when incidents aren't configured", async () => {
+    stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "skilljit-revoke-"));
+    remote = fs.mkdtempSync(path.join(os.tmpdir(), "skilljit-revoke-remote-empty-"));
+    await expect(cmdIncidentsRevoke({ id: "git:x/incidents/abc1234", stateDir }, () => {})).rejects.toThrow(
+      /not configured/i,
+    );
+  });
+
+  it("throws a clear error when no incident file matches the given id", async () => {
+    const { execFileSync } = await import("node:child_process");
+    stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "skilljit-revoke-"));
+    remote = fs.mkdtempSync(path.join(os.tmpdir(), "skilljit-revoke-remote-"));
+    execFileSync("git", ["init", "-q", "--bare", "-b", "main", remote]);
+    const localClonePath = path.join(stateDir, "incidents-write");
+    execFileSync("git", ["clone", "-q", remote, localClonePath]);
+    execFileSync("sh", ["-c", `cd '${localClonePath}' && git -c user.email=t@t.com -c user.name=t commit --allow-empty -q -m init`]);
+    execFileSync("git", ["push", "-q"], { cwd: localClonePath });
+    writeIncidentsConfig(stateDir, { repoUrl: remote, localClonePath });
+
+    await expect(
+      cmdIncidentsRevoke({ id: "git:nope/incidents/0000000", stateDir }, () => {}),
+    ).rejects.toThrow(/no incident file found/i);
   });
 });
 

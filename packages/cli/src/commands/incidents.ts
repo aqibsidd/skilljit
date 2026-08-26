@@ -2,8 +2,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { execFile, spawn } from "node:child_process";
 import { promisify } from "node:util";
-import type { ExecFileFn } from "@skilljit/core";
-import { redactSecrets, serializeIncidentMd } from "@skilljit/core";
+import type { ExecFileFn, IncidentRecord } from "@skilljit/core";
+import { redactSecrets, serializeIncidentMd, parseIncidentMd } from "@skilljit/core";
 
 const execFileAsync = promisify(execFile);
 
@@ -91,6 +91,88 @@ export async function cmdIncidentsInit(opts: IncidentsInitOptions, log: (s: stri
   writeIncidentsConfig(opts.stateDir, { repoUrl: opts.repoUrl, localClonePath });
   log(`Incidents repo configured: ${opts.repoUrl}`);
   log(`Run \`skilljit incidents install-hook\` next to capture incidents automatically.`);
+}
+
+export interface IncidentsRevokeOptions {
+  id: string;
+  reason?: string;
+  stateDir: string;
+  execFileImpl?: ExecFileFn;
+  readFileImpl?: (filePath: string) => string;
+  writeFileImpl?: (filePath: string, content: string) => void;
+}
+
+/**
+ * Retracts a previously-captured incident: marks it revoked (kept, not
+ * deleted — there's no mechanism to detect a deleted file and drop the
+ * matching catalog row on sync) and pushes the update. Once synced,
+ * incident_find excludes it from results and incident_load refuses to
+ * return its content.
+ */
+export async function cmdIncidentsRevoke(opts: IncidentsRevokeOptions, log: (s: string) => void): Promise<void> {
+  const run: ExecFileFn = opts.execFileImpl ?? ((cmd, args) => execFileAsync(cmd, args, { maxBuffer: 50 * 1024 * 1024 }));
+  const readFile = opts.readFileImpl ?? ((p: string) => fs.readFileSync(p, "utf8"));
+  const writeFile = opts.writeFileImpl ?? ((p: string, c: string) => fs.writeFileSync(p, c));
+
+  const config = readIncidentsConfig(opts.stateDir);
+  if (!config) {
+    throw new Error("incidents not configured (run: skilljit incidents init <repo-url>)");
+  }
+
+  await run("git", ["-C", config.localClonePath, "pull", "--ff-only", "--quiet"]);
+
+  // Ids are `<source>/incidents/<sha7>` (see parseIncidentMd) and files
+  // are named `<date>-<sha7>.md` (see runCaptureIncident) — both carry
+  // the same short sha, which is what actually ties an id back to a file.
+  const shaSuffix = opts.id.split("/").pop();
+  const incidentsDir = path.join(config.localClonePath, "incidents");
+  const filename =
+    shaSuffix && fs.existsSync(incidentsDir)
+      ? fs.readdirSync(incidentsDir).find((f) => f.endsWith(`-${shaSuffix}.md`))
+      : undefined;
+  if (!filename) {
+    throw new Error(`no incident file found matching id "${opts.id}"`);
+  }
+
+  const filePath = path.join(incidentsDir, filename);
+  const parsed = parseIncidentMd(readFile(filePath), { source: `git:${config.repoUrl}` });
+  if (!parsed || parsed.id !== opts.id) {
+    throw new Error(`incident file at ${filePath} did not match id "${opts.id}"`);
+  }
+
+  const updated: Omit<IncidentRecord, "id"> = {
+    symptom: parsed.symptom,
+    investigation: parsed.investigation,
+    rootCause: parsed.rootCause,
+    fix: parsed.fix,
+    commitSha: parsed.commitSha,
+    repo: parsed.repo,
+    filesTouched: parsed.filesTouched,
+    capturedAt: parsed.capturedAt,
+    verified: parsed.verified,
+    revoked: true,
+    revokedReason: opts.reason,
+  };
+  writeFile(filePath, serializeIncidentMd(updated));
+
+  const committer = await getCaptureCommitter(run, config.localClonePath);
+  await run("git", ["-C", config.localClonePath, "add", `incidents/${filename}`]);
+  await run("git", [
+    "-C",
+    config.localClonePath,
+    "-c",
+    `user.email=${committer.email}`,
+    "-c",
+    `user.name=${committer.name}`,
+    "commit",
+    "-q",
+    "-m",
+    `incident: revoke ${filename}`,
+  ]);
+  await run("git", ["-C", config.localClonePath, "push", "-u", "--quiet", "origin", "HEAD"]);
+
+  log(`Revoked incident ${opts.id}${opts.reason ? ` (${opts.reason})` : ""}. Pushed to ${config.repoUrl}.`);
+  log(`Teammates will stop seeing it in incident_find/incident_load after their next \`skilljit sync\`.`);
 }
 
 const CAPTURE_HOOK_ENTRY = {
@@ -432,6 +514,7 @@ export async function runCaptureIncident(
       repo: codeRepoUrl,
       capturedAt,
       verified: false,
+      revoked: false,
     };
 
     await run("git", ["-C", config.localClonePath, "pull", "--ff-only", "--quiet"]);

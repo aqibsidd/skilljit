@@ -73,6 +73,14 @@ export interface IncidentRecord {
   capturedAt: string;
   /** False until a human confirms this auto-captured record is accurate. */
   verified: boolean;
+  /** True once someone has retracted this incident (`skilljit incidents
+   * revoke`) — e.g. it turned out wrong, or it leaked something it
+   * shouldn't have. Kept, not deleted: incident_find excludes revoked
+   * records from results, and incident_load refuses to return a revoked
+   * record's content. */
+  revoked: boolean;
+  /** Why it was revoked, if given. Only meaningful when revoked is true. */
+  revokedReason?: string;
 }
 
 /** A search hit: an incident plus its relevance rank (lower = more relevant). */
