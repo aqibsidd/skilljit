@@ -131,6 +131,28 @@ Both flags are repeatable. `--git` sources are ingested via a bare mirror clone 
 sync after that is a cheap `git fetch` + worktree checkout — no rate limit, no token,
 works against anything `git` itself can reach.
 
+### How new skills actually get picked up
+
+`sync` is the only thing that writes into the catalog — nothing runs it for you.
+`skilljit serve` never syncs on its own; it just reads whatever is currently in
+`~/.skilljit/catalog.db`. So a skill someone adds to a repo you track isn't visible
+until *something* runs `sync` again — but once it does, it's visible immediately,
+even in an already-running session: `skill_find` queries the catalog live on every
+call rather than caching it at startup, so there's no need to restart `serve` after a
+sync completes.
+
+If you want that closer to automatic, pick one:
+
+```bash
+# Cron, e.g. hourly
+0 * * * * npx -y skilljit sync >> ~/.skilljit/sync.log 2>&1
+```
+
+Or a `post-receive` hook on your skills repo that shells out to `skilljit sync` on
+every push, so it's fresh the moment someone merges. skilljit intentionally doesn't
+pick this for you — running `sync` by hand before a work session is a perfectly
+reasonable default too.
+
 ## The six tools
 
 skilljit exposes a fixed surface — it never grows or shrinks at runtime.
