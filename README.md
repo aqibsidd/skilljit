@@ -266,7 +266,11 @@ heredoc-wrapped commit format Claude Code itself uses), the hook:
 3. Fails closed on anything that doesn't check out (bad JSON shape, a redaction
    concern, the commit not actually having landed) — nothing gets written or pushed
    unless the whole pipeline succeeds.
-4. Commits and pushes the result to the incidents repo from step 1.
+4. Commits and pushes the result to the incidents repo from step 1, attributed to
+   *your* own git identity (`user.name`/`user.email`, read from the code repo the
+   fix happened in — the normal local → global → system config cascade) rather than
+   a generic bot account, falling back to a `skilljit` identity only if neither is
+   configured anywhere.
 
 Everyone who runs `skilljit sync` afterward picks up new incidents the same way they
 already pick up new skills — no separate command.
