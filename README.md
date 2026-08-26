@@ -162,7 +162,7 @@ skilljit exposes a fixed surface — it never grows or shrinks at runtime.
 
 | Tool | Returns |
 |---|---|
-| `skill_find(query, limit=8)` | Cheap candidates: id, source, one-line description, install count, audit status. |
+| `skill_find(query, limit=8)` | Cheap candidates: id, source, one-line description, install count, live load count, audit status. |
 | `skill_load(name)` | Full SKILL.md body for one skill by id, plus a list of any bundled file paths (not their content). The main point a skill's content enters context. |
 | `skill_read_file(name, path)` | One bundled reference doc or helper script's content, by a path `skill_load` listed. |
 | `tool_find(query, limit=8)` | Matching upstream MCP tools' full JSON Schema, across every connected server. |
@@ -173,6 +173,13 @@ skilljit exposes a fixed surface — it never grows or shrinks at runtime.
 a **pull**, all the way down: the always-loaded cost stops scaling with catalog size,
 and a skill's bundled reference docs/scripts stay out of context until named by path,
 even after the skill itself has been loaded.
+
+`skill_find`'s ranking isn't pure static text relevance either: every real
+`skill_load` call increments a live, cross-session load count for that skill, and
+`skill_find` blends it in as a secondary signal — among candidates that already
+match the query, ones actually loaded more often in practice rank slightly higher.
+It only reorders matches; a skill that didn't match the query can never be
+surfaced by popularity alone.
 
 `tool_find` and `tool_call` only appear once you've configured upstream MCP servers
 via `skilljit adopt` (see below) — run skills-only and the surface is 4 tools, not 6.

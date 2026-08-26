@@ -115,6 +115,7 @@ export function createServer(opts: CreateServerOptions): ServerHandle {
           source: h.skill.source,
           description: h.skill.description,
           installCount: h.skill.installCount,
+          loadCount: h.skill.loadCount,
           auditStatus: h.skill.auditStatus,
         })),
         null,
@@ -144,6 +145,7 @@ export function createServer(opts: CreateServerOptions): ServerHandle {
           content: [{ type: "text" as const, text: `No skill found with id "${name}". Call skill_find first.` }],
         };
       }
+      catalog.recordSkillLoad(name);
       let text = skill.body;
       if (skill.files && skill.files.length > 0) {
         const paths = skill.files.map((f) => f.path).join(", ");

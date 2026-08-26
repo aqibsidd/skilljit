@@ -20,7 +20,8 @@ CREATE TABLE IF NOT EXISTS skills (
   files_json    TEXT,
   install_count INTEGER,
   audit_status  TEXT,
-  updated_at    TEXT NOT NULL
+  updated_at    TEXT NOT NULL,
+  load_count    INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE VIRTUAL TABLE IF NOT EXISTS skills_fts USING fts5(
@@ -115,6 +116,9 @@ export class Catalog {
     if (!columns.some((c) => c.name === "files_json")) {
       this.db.exec(`ALTER TABLE skills ADD COLUMN files_json TEXT`);
     }
+    if (!columns.some((c) => c.name === "load_count")) {
+      this.db.exec(`ALTER TABLE skills ADD COLUMN load_count INTEGER NOT NULL DEFAULT 0`);
+    }
     const incidentColumns = this.db.prepare(`PRAGMA table_info(incidents)`).all() as { name: string }[];
     if (!incidentColumns.some((c) => c.name === "revoked")) {
       this.db.exec(`ALTER TABLE incidents ADD COLUMN revoked INTEGER NOT NULL DEFAULT 0`);
@@ -176,13 +180,28 @@ export class Catalog {
     return rowToSkill(row);
   }
 
+  /** Records a real skill_load call — the live usage signal searchSkills
+   * blends into ranking. Shared across every session via this catalog.db,
+   * the same durability pattern as the global token ledger. */
+  recordSkillLoad(id: string): void {
+    this.db.prepare(`UPDATE skills SET load_count = load_count + 1 WHERE id = ?`).run(id);
+  }
+
   searchSkills(query: string, limit = 8): SkillSearchHit[] {
     const ftsQuery = toFtsQuery(query);
     if (!ftsQuery) return [];
+    // Fetch a wider pool than `limit` by raw text relevance, then rerank
+    // it with the load_count signal in JS and truncate — this only ever
+    // reorders rows that already matched the query; it can't surface
+    // something FTS5 didn't match. Widening the pool (capped at 50) lets
+    // a popular-but-slightly-lower-relevance skill actually get a chance
+    // to move up, instead of blending only within an already-truncated
+    // top `limit`.
+    const poolSize = Math.min(Math.max(limit * 5, limit), 50);
     const rows = this.db
       .prepare(
         `
-        SELECT s.id, s.name, s.source, s.description, s.install_count, s.audit_status, s.updated_at,
+        SELECT s.id, s.name, s.source, s.description, s.install_count, s.audit_status, s.updated_at, s.load_count,
                bm25(skills_fts) AS rank
         FROM skills_fts
         JOIN skills s ON s.id = skills_fts.id
@@ -191,18 +210,29 @@ export class Catalog {
         LIMIT ?
       `,
       )
-      .all(ftsQuery, limit) as any[];
-    return rows.map((row) => ({
+      .all(ftsQuery, poolSize) as any[];
+
+    // bm25() is lower-is-better; log-damped so a handful of loads nudges
+    // ranking without a very popular skill drowning out real relevance
+    // differences for an unrelated query.
+    const LOAD_COUNT_WEIGHT = 0.15;
+    const blended = rows
+      .map((row) => ({ row, blendedRank: row.rank - LOAD_COUNT_WEIGHT * Math.log10(1 + (row.load_count ?? 0)) }))
+      .sort((a, b) => a.blendedRank - b.blendedRank)
+      .slice(0, limit);
+
+    return blended.map(({ row, blendedRank }) => ({
       skill: {
         id: row.id,
         name: row.name,
         source: row.source,
         description: row.description,
         installCount: row.install_count ?? undefined,
+        loadCount: row.load_count ?? 0,
         auditStatus: row.audit_status ?? "unaudited",
         updatedAt: row.updated_at,
       },
-      rank: row.rank,
+      rank: blendedRank,
     }));
   }
 
@@ -432,6 +462,7 @@ function rowToSkill(row: any): SkillRecord {
     body: row.body,
     files: row.files_json ? JSON.parse(row.files_json) : undefined,
     installCount: row.install_count ?? undefined,
+    loadCount: row.load_count ?? 0,
     auditStatus: row.audit_status ?? "unaudited",
     updatedAt: row.updated_at,
   };

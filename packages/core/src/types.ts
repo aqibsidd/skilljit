@@ -23,6 +23,13 @@ export interface SkillRecord {
   files?: SkillFile[];
   /** Optional install-count / popularity signal from the upstream registry. */
   installCount?: number;
+  /** How many times skill_load has actually been called for this skill,
+   * across every session sharing this catalog. A live usage signal —
+   * distinct from installCount, which is static metadata from the
+   * upstream source. Used as a secondary ranking signal in searchSkills:
+   * a tie-breaker among candidates that already match the query, never
+   * a way to surface something that didn't. */
+  loadCount?: number;
   /** Audit status surfaced by the upstream registry, if any. */
   auditStatus?: "pass" | "warn" | "fail" | "unaudited";
   /** ISO timestamp of when this record was last refreshed. */

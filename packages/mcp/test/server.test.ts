@@ -86,6 +86,27 @@ describe("skilljit MCP server", () => {
     expect(result.isError).toBe(true);
   });
 
+  it("skill_load records a real load, visible in the catalog", async () => {
+    expect(handle.catalog.getSkill("acme/repo/postgres-migrate")?.loadCount).toBe(0);
+    await client.callTool({ name: "skill_load", arguments: { name: "acme/repo/postgres-migrate" } });
+    await client.callTool({ name: "skill_load", arguments: { name: "acme/repo/postgres-migrate" } });
+    expect(handle.catalog.getSkill("acme/repo/postgres-migrate")?.loadCount).toBe(2);
+  });
+
+  it("skill_load on an unknown id records no load", async () => {
+    await client.callTool({ name: "skill_load", arguments: { name: "nope/nope" } });
+    expect(handle.catalog.getSkill("acme/repo/postgres-migrate")?.loadCount).toBe(0);
+  });
+
+  it("skill_find candidates include loadCount", async () => {
+    await client.callTool({ name: "skill_load", arguments: { name: "acme/repo/postgres-migrate" } });
+    const result = await client.callTool({ name: "skill_find", arguments: { query: "postgres migration" } });
+    const text = (result.content as any[])[0].text as string;
+    const candidates = JSON.parse(text);
+    const found = candidates.find((c: any) => c.id === "acme/repo/postgres-migrate");
+    expect(found.loadCount).toBe(1);
+  });
+
   it("skill_load lists bundled files without inlining their content", async () => {
     const result = await client.callTool({ name: "skill_load", arguments: { name: "acme/repo/docker-expert" } });
     const text = (result.content as any[])[0].text as string;

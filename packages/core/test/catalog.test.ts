@@ -85,6 +85,80 @@ describe("Catalog", () => {
     expect(hits.length).toBe(5);
   });
 
+  it("recordSkillLoad increments load_count, visible via getSkill", () => {
+    catalog.upsertSkills([makeSkill()]);
+    expect(catalog.getSkill("acme/repo/pdf-processing")?.loadCount).toBe(0);
+    catalog.recordSkillLoad("acme/repo/pdf-processing");
+    catalog.recordSkillLoad("acme/repo/pdf-processing");
+    expect(catalog.getSkill("acme/repo/pdf-processing")?.loadCount).toBe(2);
+  });
+
+  it("recordSkillLoad only affects the targeted skill", () => {
+    catalog.upsertSkills([makeSkill(), makeSkill({ id: "x/y/z", name: "z" })]);
+    catalog.recordSkillLoad("acme/repo/pdf-processing");
+    expect(catalog.getSkill("acme/repo/pdf-processing")?.loadCount).toBe(1);
+    expect(catalog.getSkill("x/y/z")?.loadCount).toBe(0);
+  });
+
+  it("re-syncing a skill (upsertSkills) never resets its accumulated load_count", () => {
+    catalog.upsertSkills([makeSkill()]);
+    catalog.recordSkillLoad("acme/repo/pdf-processing");
+    catalog.recordSkillLoad("acme/repo/pdf-processing");
+    // A real re-sync re-upserts every skill from source metadata, which
+    // knows nothing about live usage — this must not clobber the counter.
+    catalog.upsertSkills([makeSkill({ description: "Refreshed from source on next sync" })]);
+    expect(catalog.getSkill("acme/repo/pdf-processing")?.loadCount).toBe(2);
+  });
+
+  it("breaks a search-relevance tie in favor of the more-loaded skill", () => {
+    // Identical description text against both skills means bm25 scores
+    // them equally — load_count is the only thing left to break the tie.
+    catalog.upsertSkills([
+      makeSkill({ id: "acme/repo/csv-a", name: "csv-a", description: "Process CSV files quickly and reliably." }),
+      makeSkill({ id: "acme/repo/csv-b", name: "csv-b", description: "Process CSV files quickly and reliably." }),
+    ]);
+    catalog.recordSkillLoad("acme/repo/csv-b");
+    catalog.recordSkillLoad("acme/repo/csv-b");
+    catalog.recordSkillLoad("acme/repo/csv-b");
+    const hits = catalog.searchSkills("process csv files", 8);
+    expect(hits[0].skill.id).toBe("acme/repo/csv-b");
+  });
+
+  it("never surfaces a skill that didn't match the query, no matter how many loads it has", () => {
+    catalog.upsertSkills([makeSkill()]);
+    catalog.recordSkillLoad("acme/repo/pdf-processing");
+    catalog.recordSkillLoad("acme/repo/pdf-processing");
+    const hits = catalog.searchSkills("zzz_nonexistent_xyz", 8);
+    expect(hits.length).toBe(0);
+  });
+
+  it("opens a pre-existing catalog.db created before load_count existed, without crashing", () => {
+    catalog.upsertSkills([makeSkill()]);
+    catalog.close();
+    const legacyDb = new Database(dbPath);
+    legacyDb.exec(`ALTER TABLE skills RENAME TO skills_new`);
+    legacyDb.exec(`
+      CREATE TABLE skills (
+        id TEXT PRIMARY KEY, name TEXT NOT NULL, source TEXT NOT NULL,
+        description TEXT NOT NULL, body TEXT NOT NULL, files_json TEXT,
+        install_count INTEGER, audit_status TEXT, updated_at TEXT NOT NULL
+      )
+    `);
+    legacyDb.exec(`
+      INSERT INTO skills (id, name, source, description, body, files_json, install_count, audit_status, updated_at)
+      SELECT id, name, source, description, body, files_json, install_count, audit_status, updated_at FROM skills_new
+    `);
+    legacyDb.exec(`DROP TABLE skills_new`);
+    legacyDb.close();
+
+    const reopened = new Catalog(dbPath);
+    expect(reopened.getSkill("acme/repo/pdf-processing")?.loadCount).toBe(0);
+    reopened.recordSkillLoad("acme/repo/pdf-processing");
+    expect(reopened.getSkill("acme/repo/pdf-processing")?.loadCount).toBe(1);
+    reopened.close();
+    catalog = new Catalog(dbPath); // afterEach expects `catalog` to still be open+closeable
+  });
+
   it("lists total skill count", () => {
     catalog.upsertSkills([makeSkill(), makeSkill({ id: "x/y/z", name: "z" })]);
     expect(catalog.count()).toBe(2);
